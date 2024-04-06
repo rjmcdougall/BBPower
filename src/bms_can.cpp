@@ -5,14 +5,17 @@
 #include "burner_power.h"
 
 //#include "bms.h"
+#include "ina229.h"
 
 //#define USE_ESP_IDF_LOG 1
+
+#define BURNERBOARD_POWER 1
 
 static constexpr const char *TAG = "bms_can";
 
 #define CAN_DEBUG 1
 
-#define CAN_ADDR 19
+#define CAN_ADDR 18
 #define CAN_ADDR_DIEBIE 10
 
 // TODO: Fix the send buffer allocations
@@ -334,6 +337,40 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 
 	switch (packet_id)
 	{
+#ifdef BURNERBOARD_POWER		
+	case COMM_FW_VERSION:
+	{
+		// BLog_i(TAG, "CAN  process packet: COMM_FW_VERSION\n");
+
+		int32_t ind = 0;
+		uint8_t send_buffer[50];
+		send_buffer[ind++] = COMM_FW_VERSION;
+		send_buffer[ind++] = FW_VERSION_MAJOR;
+		send_buffer[ind++] = FW_VERSION_MINOR;
+
+		strcpy((char *)(send_buffer + ind), HW_NAME);
+		ind += strlen(HW_NAME) + 1;
+
+		uint64_t esp_chip_id[2];
+		esp_chip_id[0] = ESP.getEfuseMac();
+
+		memcpy(send_buffer + ind, &esp_chip_id[0], 12);
+		ind += 12;
+
+		send_buffer[ind++] = 0;
+		send_buffer[ind++] = FW_TEST_VERSION_NUMBER;
+
+		send_buffer[ind++] = HW_TYPE_CUSTOM_MODULE;
+
+		send_buffer[ind++] = 1; // No custom config
+
+		// reply_func(send_buffer, ind);
+		can_send_buffer(rx_buffer_last_id, send_buffer, ind, 1);
+		BLog_d(TAG, "Sent COMM_FW_VERSION to %d", rx_buffer_last_id);
+	}
+	break;
+#endif //BURNERBOARD_POWER	
+
 #ifdef BMS		
 	case COMM_FW_VERSION:
 	{
@@ -820,20 +857,7 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 				stat_tmp->rpm = (float)buffer_get_int32(data8, &ind);
 				stat_tmp->current = (float)buffer_get_int16(data8, &ind) / 10.0;
 				stat_tmp->duty = (float)buffer_get_int16(data8, &ind) / 1000.0;
-				BLog_d(TAG, "rpm = %d", stat_tmp->rpm );
-#define BAJA_HEADLIGHT_PIN GPIO_NUM_13
-				if (stat_tmp->rpm > 0)
-				{
-					// digitalWrite(BAJA_HEADLIGHT_PIN, LOW);
-					// TelnetStream.println("h/l on");
-					// TelnetStream.flush();
-				}
-				else
-				{
-					// TelnetStream.println("h/l off");
-					// TelnetStream.flush();
-					// digitalWrite(BAJA_HEADLIGHT_PIN, HIGH);
-				}
+				//BLog_d(TAG, "current = %f, duty = %f, rpm = %f", stat_tmp->current, stat_tmp->duty, stat_tmp->rpm );
 				break;
 			}
 		}
@@ -1145,9 +1169,22 @@ void bms_can::can_status_task()
 			*/
 		}
 
+#ifdef BURNERBOARD_POWER
+		send_index = 0;
+		buffer_append_float32(buffer, pwr_get_vin(),  1e2, &send_index);
+		buffer_append_float32(buffer, pwr_get_current(),  1e2,  &send_index);
+		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BURNERBOARD_POWER1 << 8), buffer, send_index);
+		send_index = 0;
+		buffer_append_float32(buffer, pwr_get_power(),  1e2, &send_index);
+		buffer_append_float32(buffer, pwr_get_temp(),  1e2, &send_index);
+		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BURNERBOARD_POWER2 << 8), buffer, send_index);
+
+#endif // BURNERBOARD_POWER
+
 #ifdef BMS_CAN
 		// BLog_i(TAG, "can_status_task sending status v %f\n", bms_if_get_v_tot());
 
+		send_index = 0;
 		buffer_append_float32_auto(buffer, bms_if_get_v_tot(), &send_index);
 		buffer_append_float32_auto(buffer, bms_if_get_v_charge(), &send_index);
 		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BMS_V_TOT << 8), buffer, send_index);
@@ -1416,6 +1453,22 @@ float bms_can::bms_if_get_temp(int sensor)
 
 // uint8_t totalNumberOfBanks;
 //   uint8_t totalNumberOfSeriesModules;
+#endif // BMS_CAN
+
+#ifdef BURNERBOARD_POWER
+float bms_can::pwr_get_vin() {
+	return ina.vBus();
+}
+float bms_can::pwr_get_current() {
+	return ina.current();
+}
+float bms_can::pwr_get_power() {
+	return ina.power();
+}
+float bms_can::pwr_get_temp() {
+	return ina.dieTemp();
+}
+#endif
 
 int bms_can::rxcnt(void)
 {
@@ -1426,4 +1479,46 @@ int bms_can::txcnt(void)
 {
 	return bms_can::tx_count;
 }
-#endif // BMS_CAN
+
+float bms_can::vescRpm() 
+{
+	uint32_t last_rx_time = 0;
+	float rpm = 0;
+
+	for (int i = 0; i < CAN_STATUS_MSGS_TO_STORE; i++)
+		{
+			can_status_msg *stat_tmp = &stat_msgs[i];
+			uint32_t rx_time = stat_tmp->rx_time;
+			if (rx_time > last_rx_time) {
+				last_rx_time = rx_time;
+				rpm = stat_tmp->rpm;
+			}
+		}
+
+	if ((millis() - last_rx_time) < 500) {
+		return rpm;
+	}
+	return 0.0f;
+}
+
+
+
+bool bms_can::vescActive()
+{
+	uint32_t last_rx_time = 0;
+
+	for (int i = 0; i < CAN_STATUS_MSGS_TO_STORE; i++)
+		{
+			can_status_msg *stat_tmp = &stat_msgs[i];
+			uint32_t rx_time = stat_tmp->rx_time;
+			if (rx_time > last_rx_time) {
+				last_rx_time = rx_time;
+			}
+		}
+
+	if ((millis() - last_rx_time) < 500) {
+		return true;
+	}
+	return false;
+}
+

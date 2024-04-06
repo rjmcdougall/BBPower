@@ -170,14 +170,6 @@ ina229::ina229()
 
 void ina229::Reset()
 {
-    //uint16_t cfg = 0;
-
-    /*  Read programmed configuration  */
-    //cfg = s.readRegister_16((uint8_t)Register::CONFIG);
-
-    /* Set Reset bit bit */
-    //cfg |= (uint8_t)RST::SystemReset;
-
     data.clear();
     data.config.reset = RST::SystemReset;
     s.writeRegister((uint8_t)Register::CONFIG, data.value16);
@@ -195,14 +187,6 @@ void ina229::begin()
     /* Reset all registers are to default values */
     Reset();
     delay(100);
-
-    /* Set INA230 configuration */
-    // cfg = INA229_MODE_CONTINOUS_VBUS_VSHUNT | INA229_VBUSCT_1052 | INA229_VSHCT_1052 | INA229_VTCT_1052 | INA229_AVG_16;
-    // cfg = (cfg & ((uint16_t)~((uint8_t)Register::ADC_CONFIG_MODE_Msk))) | (pConfig->ShuntConvertTime << (uint8_t)Register::ADC_CONFIG_MODE_Pos);
-    // cfg = (cfg & ((uint16_t)~((uint8_t)Register::ADC_CONFIG_VBUSCT_Msk))) | (pConfig->BusConvertTime << (uint8_t)Register::ADC_CONFIG_VBUSCT_Pos);
-    // cfg = (cfg & ((uint16_t)~((uint8_t)Register::ADC_CONFIG_VSHCT_Msk))) | (pConfig->AveragingMode << (uint8_t)Register::ADC_CONFIG_VSHCTPos);
-    // cfg = (cfg & ((uint16_t)~((uint8_t)Register::ADC_CONFIG_VTCT_Msk))) | (pConfig->AveragingMode << INA230_REG_CFG_AVG_Pos);
-    // cfg = (cfg & ((uint16_t)~((uint8_t)Register::ADC_CONFIG_AVG_Msk))) | (pConfig->AveragingMode << INA230_REG_CFG_AVG_Pos);
 
     data.clear();
     data.config.adcRange = adcRange_ = ADCRANGE::_40_96mV;

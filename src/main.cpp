@@ -34,7 +34,6 @@ CRGB leds[1];
 
 void setup()
 {
-    delay(4000);
     Serial.begin(460800);
 
     Serial.println("starting");
@@ -79,23 +78,61 @@ void setup()
     delay(5000);
 }
 
-void loop() 
+uint32_t last_active_time = 0;
+
+void loop()
 {
-    digitalWrite(AMP_RELAY_OFF, LOW);
-    digitalWrite(LEG_REG_RELAY_OFF, LOW);
-    digitalWrite(LEG_REG_ENABLE, HIGH);
-    digitalWrite(REG_5V_ENABLE, HIGH);
-    digitalWrite(HEADLIGHT_ON, HIGH);
-    for (int i = 0; i < 10; i++)
+    BLog_d(TAG, "vesc = %d, rpm = %f, ina229 vbus = %f, vshunt = %f mv, current = %f", can.vescActive(), can.vescRpm(), ina.vBus(), ina.vShunt() * 1000, ina.current());
+    if (can.vescRpm() > 0)
     {
-        delay(1000);
-        BLog_d(TAG, "ina229 vbus = %f, vshunt = %f mv, current = %f", ina.vBus(), ina.vShunt() * 1000, ina.current());
+        digitalWrite(HEADLIGHT_ON, HIGH);
     }
-    digitalWrite(LEG_REG_ENABLE, LOW);
-    for (int i = 0; i < 10; i++)
+    else
     {
-        delay(1000);
-        BLog_d(TAG, "ina229 vbus = %f, vshunt = %f mv, current = %f", ina.vBus(), ina.vShunt() * 1000, ina.current());
+        digitalWrite(HEADLIGHT_ON, LOW);
+    }
+
+    if (can.vescActive())
+    {
+        last_active_time = millis();
+        leds[0] = CRGB::Blue;
+        FastLED.show();
+        digitalWrite(AMP_RELAY_OFF, LOW);
+        digitalWrite(LEG_REG_RELAY_OFF, LOW);
+        delay(100);
+        digitalWrite(LEG_REG_ENABLE, HIGH);
+        leds[0] = CRGB::Black;
+        FastLED.show();
+        delay(50);
+    }
+    else
+    {
+        leds[0] = CRGB::Green;
+        FastLED.show();
+        digitalWrite(LEG_REG_ENABLE, LOW);
+        delay(100);
+        digitalWrite(AMP_RELAY_OFF, HIGH);
+        digitalWrite(LEG_REG_RELAY_OFF, HIGH);
+        leds[0] = CRGB::Black;
+        FastLED.show();
+    }
+    if ((millis() - last_active_time) < 10000)
+    {
+        digitalWrite(REG_5V_ENABLE, HIGH);
+        FastLED.setBrightness(200);
+    }
+    else
+    {
+        FastLED.setBrightness(10);
+        digitalWrite(REG_5V_ENABLE, LOW);
+        leds[0] = CRGB::Black;
+        FastLED.show();
+        esp_sleep_enable_timer_wakeup(1000000); // 1 sec
+        esp_light_sleep_start();
+        leds[0] = CRGB::Red;
+        FastLED.show();
+        esp_sleep_enable_timer_wakeup(100000); // 1 sec
+        esp_light_sleep_start();
     }
 }
 

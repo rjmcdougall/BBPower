@@ -415,6 +415,6 @@ private:
 };
 
 
-
+extern ina229 ina;
 
 #endif /* INC_INA229_H_ */

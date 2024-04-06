@@ -2,7 +2,7 @@
 //#include "taskCPP.h"
 #include <Arduino.h>
 
-#define HW_NAME "bb_bms"
+#define HW_NAME "bb_power"
 
 // Firmware version
 #define FW_VERSION_MAJOR			6
@@ -180,6 +180,8 @@ typedef enum {
 	CAN_PACKET_UPDATE_PID_POS_OFFSET,
 	CAN_PACKET_POLL_ROTOR_POS,
 	CAN_PACKET_NOTIFY_BOOT,
+	CAN_PACKET_BURNERBOARD_POWER1 = 100,
+	CAN_PACKET_BURNERBOARD_POWER2,
 	CAN_PACKET_MAKE_ENUM_32_BITS = 0xFFFFFFFF,
 } CAN_PACKET_ID;
 
@@ -363,6 +365,8 @@ public:
 	static void begin(void);
 	static int rxcnt(void);
 	static int txcnt(void);
+	static float vescRpm();
+	static bool vescActive();
 
 private:
 	static void initCAN();
@@ -380,6 +384,10 @@ private:
 	static void commands_process_packet(unsigned char *data, unsigned int len);
     static void send_packet_wrapper(unsigned char *data, unsigned int len);
 	static void commands_send_packet(unsigned char *data, unsigned int len);
+	static float pwr_get_vin();
+	static float pwr_get_current();
+	static float pwr_get_power();
+	static float pwr_get_temp();
 
 	// Private variables
 	static TaskHandle_t can_read_task_handle;
