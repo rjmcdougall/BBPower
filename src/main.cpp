@@ -5,6 +5,8 @@
 #include "bms_can.h"
 #include "ina229.h"
 
+static const int kbrainSleepSeconds = 100000;
+
 #ifdef ESP8266
 #define HEADLIGHT_ON 12
 #define LEG_REG_ENABLE 13
@@ -73,9 +75,9 @@ void setup()
     digitalWrite(LEG_REG_ENABLE, LOW);
 
     pinMode(REG_5V_ENABLE, OUTPUT); // 5V REG ENABLLE HIGH=ON
-    digitalWrite(REG_5V_ENABLE, LOW);
+    digitalWrite(REG_5V_ENABLE, HIGH);
 
-    delay(5000);
+    //delay(5000);
 }
 
 uint32_t last_active_time = 0;
@@ -115,14 +117,17 @@ void loop()
         digitalWrite(LEG_REG_RELAY_OFF, HIGH);
         leds[0] = CRGB::Black;
         FastLED.show();
+        delay(50);
     }
-    if ((millis() - last_active_time) < 10000)
+    // Turn on brain if VESC has been active 
+    if ((millis() - last_active_time) < (kbrainSleepSeconds * 1000))
     {
         digitalWrite(REG_5V_ENABLE, HIGH);
         FastLED.setBrightness(200);
     }
     else
     {
+        // Do some low power stuff
         FastLED.setBrightness(10);
         digitalWrite(REG_5V_ENABLE, LOW);
         leds[0] = CRGB::Black;
@@ -133,6 +138,8 @@ void loop()
         FastLED.show();
         esp_sleep_enable_timer_wakeup(100000); // 1 sec
         esp_light_sleep_start();
+        leds[0] = CRGB::Black;
+        FastLED.show();    
     }
 }
 
