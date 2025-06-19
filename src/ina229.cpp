@@ -158,7 +158,8 @@ constexpr float TemperatureLSB = 0.0078125f;
 
 constexpr float shuntVoltageLSB(ADCRANGE adcRange) { return adcRange == ADCRANGE::_163_84mV ? ShuntVoltage163_84mV_LSB : ShuntVoltage40_96mV_LSB; }
 
-spi_dev s;
+spi_dev ina229::s;
+
 struct ina229::Data ina229::data;
 ADCRANGE ina229::adcRange_;
 float ina229::shuntRes_;
@@ -167,6 +168,7 @@ float ina229::currentLsb;
 ina229::ina229()
 {
 }
+
 
 void ina229::Reset()
 {
@@ -178,12 +180,17 @@ void ina229::Reset()
     } while (data.config.reset == RST::SystemReset);
 }
 
+//SPISettings spi_s(1000000, MSBFIRST, SPI_MODE1);
+
+
 void ina229::begin()
 {
     uint16_t cfg = 0;
-    pinMode(A5, OUTPUT);
-    s.begin(SPISettings(1000000, MSBFIRST, SPI_MODE1), GPIO_NUM_8);
 
+    //pinMode(A5, OUTPUT);
+    //s.begin(spi_s, GPIO_NUM_8);
+    s.begin(GPIO_NUM_8);
+#ifdef NONO
     /* Reset all registers are to default values */
     Reset();
     delay(100);
@@ -203,7 +210,7 @@ void ina229::begin()
     data.adcConfig.mode = MODE::ContinuousTUI;
     s.writeRegister((uint8_t)Register::ADC_CONFIG, data.value16);
     delay(100);
-
+#endif
 }
 
 uint16_t ina229::ReadManufacturerID()

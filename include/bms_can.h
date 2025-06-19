@@ -2,6 +2,9 @@
 //#include "taskCPP.h"
 #include <Arduino.h>
 
+#ifndef BMS_CAN_H_
+#define BMS_CAN_H_
+
 #define HW_NAME "bb_power"
 
 // Firmware version
@@ -367,6 +370,7 @@ public:
 	static int txcnt(void);
 	static float vescRpm();
 	static bool vescActive();
+	static void commands_printf(const char* format, ...);
 
 private:
 	static void initCAN();
@@ -376,6 +380,8 @@ private:
 	static void can_process_task();
 	static void can_status_task_static(void *param);
 	static void can_status_task();
+	static void can_command_task_static(void *param);
+	static void can_command_task();
 	static void can_transmit_eid(uint32_t id, const uint8_t *data, int len);
 	static void decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced);
 	static bool can_ping(uint8_t controller_id, HW_TYPE *hw_type);
@@ -393,9 +399,11 @@ private:
 	static TaskHandle_t can_read_task_handle;
 	static TaskHandle_t can_process_task_handle;
 	static TaskHandle_t can_status_task_handle;
+	static TaskHandle_t can_command_task_handle;
 	// Task can_task;
 	static QueueHandle_t queue_canrx;
 	static QueueHandle_t queue_ping;
+	static QueueHandle_t queue_command;
 	static can_status_msg stat_msgs[CAN_STATUS_MSGS_TO_STORE];
 	static can_status_msg_2 stat_msgs_2[CAN_STATUS_MSGS_TO_STORE];
 	static can_status_msg_3 stat_msgs_3[CAN_STATUS_MSGS_TO_STORE];
@@ -409,6 +417,7 @@ private:
 	static volatile HW_TYPE ping_hw_last;
 	static uint8_t rx_buffer[RX_BUFFER_SIZE];
 	static unsigned int rx_buffer_last_id;
+	static uint8_t command_buffer[RX_BUFFER_SIZE];
 
 	// TODO: move these to a BMS accessor
 	static float bms_if_get_v_tot();
@@ -433,3 +442,6 @@ private:
 	static int HW_TEMP_CELLS_MAX();
 	static float bms_if_get_temp(int sensor);
 };
+
+
+#endif // BMS_CAN_H_

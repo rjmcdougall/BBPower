@@ -7,13 +7,14 @@ class spi_dev
 {
 public:
     spi_dev();
-    static void begin(SPISettings s, int cs);
+//    static void begin(SPISettings s, int cs);
+    static void begin(int cs);
     static uint32_t readRegister_24(uint8_t addr);
     static uint32_t writeRegister(uint8_t addr, uint16_t data);
     static uint32_t readRegister_16(uint8_t addr);
 
 private:
-    static SPISettings spisettings;
+    //static SPISettings spisettings;
     static int chipselectpin;
 };
 

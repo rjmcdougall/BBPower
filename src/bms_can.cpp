@@ -1,13 +1,14 @@
 // #include <TelnetStream.h>
-#include "bms_can.h"
+//#include "bms_can.h"
 #include "crc16.h"
 #include "buffer.h"
 #include "burner_power.h"
+#include "terminal.h"
 
-//#include "bms.h"
+// #include "bms.h"
 #include "ina229.h"
 
-//#define USE_ESP_IDF_LOG 1
+// #define USE_ESP_IDF_LOG 1
 
 #define BURNERBOARD_POWER 1
 
@@ -19,6 +20,34 @@ static constexpr const char *TAG = "bms_can";
 #define CAN_ADDR_DIEBIE 10
 
 // TODO: Fix the send buffer allocations
+
+char *data_to_hex_string(const unsigned char *data, size_t len)
+{
+	// Each byte becomes two hex characters, plus one for the null terminator.
+	size_t hex_len = len * 2 + 1;
+	char *hex_string = (char *)malloc(hex_len);
+
+	// Check if memory allocation was successful
+	if (hex_string == NULL)
+	{
+		return NULL;
+	}
+
+	// Convert each byte to its two-character hex representation
+	for (size_t i = 0; i < len; ++i)
+	{
+		// sprintf writes to the buffer at an offset of i*2.
+		// "%02x" formats the byte as a two-digit, lowercase hexadecimal number,
+		// with a leading zero if necessary (e.g., "0a" instead of "a").
+		sprintf(hex_string + (i * 2), "%02x", data[i]);
+	}
+
+	// The null terminator is automatically placed by the last sprintf call.
+	// We can ensure it's there for safety, though it's redundant.
+	hex_string[len * 2] = '\0';
+
+	return hex_string;
+}
 
 bms_can::bms_can()
 {
@@ -38,8 +67,10 @@ void bms_can::begin(void)
 TaskHandle_t bms_can::can_read_task_handle = nullptr;
 TaskHandle_t bms_can::can_process_task_handle = nullptr;
 TaskHandle_t bms_can::can_status_task_handle = nullptr;
+TaskHandle_t bms_can::can_command_task_handle = nullptr;
 QueueHandle_t bms_can::queue_canrx = nullptr;
 QueueHandle_t bms_can::queue_ping = nullptr;
+QueueHandle_t bms_can::queue_command = nullptr;
 
 can_status_msg bms_can::stat_msgs[CAN_STATUS_MSGS_TO_STORE];
 can_status_msg_2 bms_can::stat_msgs_2[CAN_STATUS_MSGS_TO_STORE];
@@ -51,9 +82,12 @@ bms_soc_soh_temp_stat bms_can::bms_stat_v_cell_min;
 
 unsigned int bms_can::rx_buffer_last_id = -1;
 uint8_t bms_can::rx_buffer[RX_BUFFER_SIZE];
+uint8_t bms_can::command_buffer[RX_BUFFER_SIZE];
 
 int bms_can::rx_count = 0;
 int bms_can::tx_count = 0;
+
+static volatile unsigned int command_buffer_len = 0;
 
 volatile HW_TYPE bms_can::ping_hw_last = HW_TYPE_VESC;
 
@@ -72,6 +106,11 @@ void bms_can::can_process_task_static(void *param)
 void bms_can::can_status_task_static(void *param)
 {
 	static_cast<bms_can *>(param)->can_status_task();
+}
+
+void bms_can::can_command_task_static(void *param)
+{
+	static_cast<bms_can *>(param)->can_command_task();
 }
 
 void enable_alerts()
@@ -114,7 +153,9 @@ void bms_can::initCAN()
 	// can_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_5, gpio_num_t::GPIO_NUM_35, TWAI_MODE_NORMAL);
 	// can_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_13, gpio_num_t::GPIO_NUM_35, TWAI_MODE_NORMAL);
 	// can_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_13, gpio_num_t::GPIO_NUM_36, TWAI_MODE_NORMAL);
-	twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_38, gpio_num_t::GPIO_NUM_39, TWAI_MODE_NORMAL);
+	// ESP32S2 TFT
+	// twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_38, gpio_num_t::GPIO_NUM_39, TWAI_MODE_NORMAL);
+	twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_2, gpio_num_t::GPIO_NUM_1, TWAI_MODE_NORMAL);
 	// g_config.mode = TWAI_MODE_NORMAL;
 	twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
 	// twai_timing_config_t t_config = TWAI_TIMING_CONFIG_50KBITS();
@@ -152,6 +193,7 @@ void bms_can::initCAN()
 	xTaskCreate(bms_can::can_process_task_static, "bms_can_process", 16384, nullptr, 1, nullptr);
 	vTaskDelay(pdMS_TO_TICKS(5000));
 	xTaskCreate(bms_can::can_status_task_static, "bms_can_status", 16384, nullptr, 1, nullptr);
+	xTaskCreate(bms_can::can_command_task_static, "bms_can_command", 16384, nullptr, 1, nullptr);
 }
 
 // TODO: For power management
@@ -182,7 +224,7 @@ void bms_can::can_read_task()
 
 		if (res == ESP_OK)
 		{
-			//BLog_i(TAG, "CAN Message received id = %d\n", message.identifier);
+			// BLog_i(TAG, "CAN Message received id = %d\n", message.identifier);
 			if (!(message.flags & TWAI_MSG_FLAG_RTR))
 			{
 				xQueueSendToBack(bms_can::queue_canrx, &message, 16);
@@ -208,7 +250,7 @@ void bms_can::can_process_task()
 	{
 		if (xQueueReceive(bms_can::queue_canrx, &rxmsg, portMAX_DELAY) == pdPASS)
 		{
-			//BLog_i(TAG, "CAN  process got msg %x %x %d!\n", rxmsg.identifier, rxmsg.flags, rxmsg.data_length_code);
+			// BLog_i(TAG, "CAN  process got msg %x %x %d!\n", rxmsg.identifier, rxmsg.flags, rxmsg.data_length_code);
 			if (rxmsg.flags == TWAI_MSG_FLAG_EXTD)
 			{
 				decode_msg(rxmsg.identifier, &rxmsg.data[0], rxmsg.data_length_code, false);
@@ -225,14 +267,14 @@ void bms_can::can_process_task()
 
 void bms_can::commands_send_packet(unsigned char *data, unsigned int len)
 {
-	//BLog_i(TAG, "CAN  send packet: \n");
+	BLog_i(TAG, "CAN  send packet: \n");
 	can_send_buffer(rx_buffer_last_id, data, len, 1);
 }
 
 void bms_can::can_send_buffer(uint8_t controller_id, uint8_t *data, unsigned int len, uint8_t send)
 {
 	uint8_t send_buffer[8];
-	//BLog_i(TAG, "CAN  send buffer: \n");
+	// BLog_i(TAG, "CAN  send buffer: \n");
 
 	if (len <= 6)
 	{
@@ -337,7 +379,7 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 
 	switch (packet_id)
 	{
-#ifdef BURNERBOARD_POWER		
+#ifdef BURNERBOARD_POWER
 	case COMM_FW_VERSION:
 	{
 		// BLog_i(TAG, "CAN  process packet: COMM_FW_VERSION\n");
@@ -369,9 +411,9 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 		BLog_d(TAG, "Sent COMM_FW_VERSION to %d", rx_buffer_last_id);
 	}
 	break;
-#endif //BURNERBOARD_POWER	
+#endif // BURNERBOARD_POWER
 
-#ifdef BMS		
+#ifdef BMS
 	case COMM_FW_VERSION:
 	{
 		// BLog_i(TAG, "CAN  process packet: COMM_FW_VERSION\n");
@@ -403,7 +445,7 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 		BLog_d(TAG, "Sent COMM_FW_VERSION to %d", rx_buffer_last_id);
 	}
 	break;
-#endif //BMS		
+#endif // BMS
 
 #ifdef DIEBIE
 	case COMM_FW_VERSION_DIEBIE:
@@ -518,7 +560,7 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 		BLog_d(TAG, "Sent COMM_BMS_GET_BATT_TYPE");
 	}
 	break;
-#endif //BMS_COMMANDS
+#endif // BMS_COMMANDS
 
 #ifdef DIEBIE
 	// Emulate DiEBie to make metr.at happy
@@ -559,7 +601,7 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 
 		buffer_append_float32(send_buffer_global, bms_if_get_v_tot(), 1e3, &ind);
 		buffer_append_float32(send_buffer_global, bms_if_get_i_in(), 1e3, &ind);
-		
+
 		send_buffer_global[ind++] = (uint8_t)(bms_if_get_soc() * 100);
 
 		buffer_append_float32(send_buffer_global, bms_if_get_v_cell_max(), 1e3, &ind);
@@ -589,7 +631,18 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 	}
 	break;
 
-#endif //DIEBIE
+#endif // DIEBIE
+
+	// bms_can:commands_process_packet: CAN  Terminal: 14626f6f
+	case COMM_TERMINAL_CMD:
+	{
+		BLog_i(TAG, "CAN  Terminal: to id %d - %d\n", rx_buffer_last_id, packet_id);
+		BLog_i(TAG, "CAN  Terminal: %s\n", data_to_hex_string(data - 1, len + 1));
+		memcpy(command_buffer, data - 1, len + 1);
+		command_buffer_len = len + 1;
+		xQueueSendToBack(queue_command, &command_buffer, 0);
+		break;
+	}
 
 	default:
 		uint32_t data1 = *(data++);
@@ -616,11 +669,10 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 
 	uint8_t id = eid & 0xFF;
 	int32_t cmd = eid >> 8;
-	//BLog_i(TAG, "CAN  (i am addr %0x) decode from id %x cmd %x d0=%x\n", CAN_ADDR, id, cmd, data8[0]);
-	// char buffer[128];
-	// sprintf(buffer, "CAN  %x decode id %x cmd %x\n", CAN_ADDR, id, cmd);
-	// TelnetStream.println(buffer);
-
+	// BLog_i(TAG, "CAN  (i am addr %0x) decode from id %x cmd %x d0=%x\n", CAN_ADDR, id, cmd, data8[0]);
+	//  char buffer[128];
+	//  sprintf(buffer, "CAN  %x decode id %x cmd %x\n", CAN_ADDR, id, cmd);
+	//  TelnetStream.println(buffer);
 
 #ifdef DIEBIE
 	// Emulate DieBie
@@ -641,7 +693,7 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 		{
 			data8[2] = COMM_GET_VALUES_DIEBIE;
 		}
-		//BLog_i(TAG, "CAN  Diebie packet: %d:  %d %d %d\n", cmd, data8[0], data8[1], data8[2]);
+		// BLog_i(TAG, "CAN  Diebie packet: %d:  %d %d %d\n", cmd, data8[0], data8[1], data8[2]);
 	}
 #endif // DIEBIE
 
@@ -654,12 +706,12 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 		switch (cmd)
 		{
 		case CAN_PACKET_FILL_RX_BUFFER:
-			//BLog_i(TAG, "CAN  decode: CAN_PACKET_FILL_RX_BUFFER\n");
+			// BLog_i(TAG, "CAN  decode: CAN_PACKET_FILL_RX_BUFFER\n");
 			memcpy(rx_buffer + data8[0], data8 + 1, len - 1);
 			break;
 
 		case CAN_PACKET_FILL_RX_BUFFER_LONG:
-			//BLog_i(TAG, "CAN  decode: CAN_PACKET_FILL_RX_BUFFER_LONG\n");
+			// BLog_i(TAG, "CAN  decode: CAN_PACKET_FILL_RX_BUFFER_LONG\n");
 			rxbuf_ind = (unsigned int)data8[0] << 8;
 			rxbuf_ind |= data8[1];
 			if (rxbuf_ind < RX_BUFFER_SIZE)
@@ -848,7 +900,7 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 		{
 			// BLog_i(TAG, "CAN  decode: CAN_PACKET_STATUS %d\n", i);
 			can_status_msg *stat_tmp = &stat_msgs[i];
-			//BLog_i(TAG, "CAN  decode: CAN_PACKET_STATUS %d id = %d\n", i, stat_tmp->id);
+			// BLog_i(TAG, "CAN  decode: CAN_PACKET_STATUS %d id = %d\n", i, stat_tmp->id);
 			if (stat_tmp->id == id || stat_tmp->id == -1)
 			{
 				ind = 0;
@@ -857,7 +909,7 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 				stat_tmp->rpm = (float)buffer_get_int32(data8, &ind);
 				stat_tmp->current = (float)buffer_get_int16(data8, &ind) / 10.0;
 				stat_tmp->duty = (float)buffer_get_int16(data8, &ind) / 1000.0;
-				//BLog_d(TAG, "current = %f, duty = %f, rpm = %f", stat_tmp->current, stat_tmp->duty, stat_tmp->rpm );
+				// BLog_d(TAG, "current = %f, duty = %f, rpm = %f", stat_tmp->current, stat_tmp->duty, stat_tmp->rpm );
 				break;
 			}
 		}
@@ -1135,7 +1187,6 @@ void bms_can::can_transmit_eid(uint32_t id, const uint8_t *data, int len)
 	  //vTaskDelay(1000 / portTICK_PERIOD_MS);
 	*/
 
-
 void bms_can::can_status_task()
 {
 	vTaskDelay(pdMS_TO_TICKS(2000));
@@ -1171,12 +1222,12 @@ void bms_can::can_status_task()
 
 #ifdef BURNERBOARD_POWER
 		send_index = 0;
-		buffer_append_float32(buffer, pwr_get_vin(),  1e2, &send_index);
-		buffer_append_float32(buffer, pwr_get_current(),  1e2,  &send_index);
+		buffer_append_float32(buffer, pwr_get_vin(), 1e2, &send_index);
+		buffer_append_float32(buffer, pwr_get_current(), 1e2, &send_index);
 		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BURNERBOARD_POWER1 << 8), buffer, send_index);
 		send_index = 0;
-		buffer_append_float32(buffer, pwr_get_power(),  1e2, &send_index);
-		buffer_append_float32(buffer, pwr_get_temp(),  1e2, &send_index);
+		buffer_append_float32(buffer, pwr_get_power(), 1e2, &send_index);
+		buffer_append_float32(buffer, pwr_get_temp(), 1e2, &send_index);
 		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BURNERBOARD_POWER2 << 8), buffer, send_index);
 
 #endif // BURNERBOARD_POWER
@@ -1320,8 +1371,6 @@ void bms_can::can_status_task()
 		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BMS_STATUS_THROTTLE_CH_DISCH_BOOL << 8), buffer, send_index);
 #endif // DIEBIE
 
-
-
 		// TODO: allow config
 		int32_t sleep_time = 1000 / 1;
 		if (sleep_time == 0)
@@ -1335,6 +1384,85 @@ void bms_can::can_status_task()
 		vTaskDelay(pdMS_TO_TICKS(1000));
 	}
 }
+
+// 				xQueueSendToBack(queue_ping, &dummy_msg, 0);
+
+void bms_can::can_command_task()
+{
+	bms_can::queue_command = xQueueCreate(10, sizeof(twai_message_t));
+
+	vTaskDelay(pdMS_TO_TICKS(2000));
+
+	for (;;)
+	{
+		if (xQueueReceive(bms_can::queue_command, &command_buffer, portMAX_DELAY) == pdPASS)
+		{
+			uint8_t *data = command_buffer;
+			unsigned int len = command_buffer_len;
+			BLog_i(TAG, "CAN  Terminal Task: %s\n", data_to_hex_string(data, len));
+			COMM_PACKET_ID packet_id;
+			static uint8_t send_buffer[512];
+
+			packet_id = (COMM_PACKET_ID)data[0];
+			data++;
+			len--;
+
+			switch (packet_id)
+			{
+			case COMM_TERMINAL_CMD:
+				data[len] = '\0';
+				// hMtxLock(&terminal_mutex);
+				BLog_i(TAG, "CAN  Terminal Command: %s\n", (char *)data);
+				terminal_process_string((char*)data);
+				// chMtxUnlock(&terminal_mutex);
+				break;
+
+			case COMM_PING_CAN:
+			{
+				int32_t ind = 0;
+				send_buffer[ind++] = COMM_PING_CAN;
+
+				for (uint8_t i = 0; i < 255; i++)
+				{
+					HW_TYPE hw_type;
+					if (can_ping(i, &hw_type))
+					{
+						send_buffer[ind++] = i;
+					}
+				}
+
+				// if (send_func_blocking) {
+				//	send_func_blocking(send_buffer, ind);
+				// }
+			}
+			break;
+
+			default:
+				break;
+			}
+		}
+	}
+}
+
+
+void bms_can::commands_printf(const char* format, ...) {
+
+	va_list arg;
+	va_start (arg, format);
+	int len;
+	static char print_buffer[255];
+
+	print_buffer[0] = COMM_PRINT;
+	len = vsnprintf(print_buffer + 1, 254, format, arg);
+	va_end (arg);
+
+	if(len > 0) {
+		commands_send_packet((unsigned char*)print_buffer,
+				(len < 254) ? len + 1 : 255);
+	}
+
+}
+
 #ifdef BMS_CAN
 
 float bms_can::bms_if_get_v_tot()
@@ -1375,7 +1503,7 @@ float bms_can::bms_if_get_v_cell(int cell)
 // Return range for soc/soh is 0.0 -> 1.0
 float bms_can::bms_if_get_soc()
 {
-	return .9f;//(float)bms.getSocPct() / 100.0;
+	return .9f; //(float)bms.getSocPct() / 100.0;
 }
 
 float bms_can::bms_if_get_soh()
@@ -1456,16 +1584,20 @@ float bms_can::bms_if_get_temp(int sensor)
 #endif // BMS_CAN
 
 #ifdef BURNERBOARD_POWER
-float bms_can::pwr_get_vin() {
+float bms_can::pwr_get_vin()
+{
 	return ina.vBus();
 }
-float bms_can::pwr_get_current() {
+float bms_can::pwr_get_current()
+{
 	return ina.current();
 }
-float bms_can::pwr_get_power() {
+float bms_can::pwr_get_power()
+{
 	return ina.power();
 }
-float bms_can::pwr_get_temp() {
+float bms_can::pwr_get_temp()
+{
 	return ina.dieTemp();
 }
 #endif
@@ -1480,45 +1612,46 @@ int bms_can::txcnt(void)
 	return bms_can::tx_count;
 }
 
-float bms_can::vescRpm() 
+float bms_can::vescRpm()
 {
 	uint32_t last_rx_time = 0;
 	float rpm = 0;
 
 	for (int i = 0; i < CAN_STATUS_MSGS_TO_STORE; i++)
+	{
+		can_status_msg *stat_tmp = &stat_msgs[i];
+		uint32_t rx_time = stat_tmp->rx_time;
+		if (rx_time > last_rx_time)
 		{
-			can_status_msg *stat_tmp = &stat_msgs[i];
-			uint32_t rx_time = stat_tmp->rx_time;
-			if (rx_time > last_rx_time) {
-				last_rx_time = rx_time;
-				rpm = stat_tmp->rpm;
-			}
+			last_rx_time = rx_time;
+			rpm = stat_tmp->rpm;
 		}
+	}
 
-	if ((millis() - last_rx_time) < 500) {
+	if ((millis() - last_rx_time) < 500)
+	{
 		return rpm;
 	}
 	return 0.0f;
 }
-
-
 
 bool bms_can::vescActive()
 {
 	uint32_t last_rx_time = 0;
 
 	for (int i = 0; i < CAN_STATUS_MSGS_TO_STORE; i++)
+	{
+		can_status_msg *stat_tmp = &stat_msgs[i];
+		uint32_t rx_time = stat_tmp->rx_time;
+		if (rx_time > last_rx_time)
 		{
-			can_status_msg *stat_tmp = &stat_msgs[i];
-			uint32_t rx_time = stat_tmp->rx_time;
-			if (rx_time > last_rx_time) {
-				last_rx_time = rx_time;
-			}
+			last_rx_time = rx_time;
 		}
+	}
 
-	if ((millis() - last_rx_time) < 500) {
+	if ((millis() - last_rx_time) < 500)
+	{
 		return true;
 	}
 	return false;
 }
-

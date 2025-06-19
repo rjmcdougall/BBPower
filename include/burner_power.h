@@ -3,6 +3,8 @@
 #include "esp_log.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include "bms_can.h"
+#include "ina229.h"
 
 #include <ESP32Logger.h>
 
@@ -36,9 +38,9 @@
 #define  BLog_e(TAG, logmsg, ...) { char buf[128]; String logstr = TAG + String(":") + String(__func__) + ": " + String(logmsg);  sprintf(buf, logstr.c_str(), ##__VA_ARGS__); Serial.println(buf);}
 #endif
 
-
-
 //#endif #define M5_LOGE(format, ...) M5.Log(ESP_LOG_ERROR  , M5UNIFIED_LOG_FORMAT(E, format), ##__VA_ARGS__)
 
+extern bms_can can;
+extern ina229 ina;
 
 #endif // _burner_power_h

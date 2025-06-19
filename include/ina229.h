@@ -373,7 +373,7 @@ public:
 
 
 private:
-    static spi_dev spidev;
+    static spi_dev s;
 
 
 #pragma pack(push, 1)
