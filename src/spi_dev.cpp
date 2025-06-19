@@ -16,10 +16,10 @@ spi_dev::spi_dev() {}
 void spi_dev::begin(int cs) {
     //spisettings = s;
     chipselectpin = cs;
-    //pinMode(cs, OUTPUT);
-    //digitalWrite(cs, HIGH);
+    pinMode(cs, OUTPUT);
+    digitalWrite(cs, HIGH);
     delay(100);
-    //SPI.begin();
+    SPI.begin();
     //SPI.begin(SCK, MISO, MOSI, -1);
 }
 

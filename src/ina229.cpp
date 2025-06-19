@@ -190,7 +190,7 @@ void ina229::begin()
     //pinMode(A5, OUTPUT);
     //s.begin(spi_s, GPIO_NUM_8);
     s.begin(GPIO_NUM_8);
-#ifdef NONO
+//#ifdef NONO
     /* Reset all registers are to default values */
     Reset();
     delay(100);
@@ -210,7 +210,7 @@ void ina229::begin()
     data.adcConfig.mode = MODE::ContinuousTUI;
     s.writeRegister((uint8_t)Register::ADC_CONFIG, data.value16);
     delay(100);
-#endif
+//#endif
 }
 
 uint16_t ina229::ReadManufacturerID()

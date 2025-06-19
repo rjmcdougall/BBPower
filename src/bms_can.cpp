@@ -16,8 +16,7 @@ static constexpr const char *TAG = "bms_can";
 
 #define CAN_DEBUG 1
 
-#define CAN_ADDR 18
-#define CAN_ADDR_DIEBIE 10
+#define CAN_ADDR 9
 
 // TODO: Fix the send buffer allocations
 
@@ -149,12 +148,9 @@ void bms_can::initCAN()
 	// xTaskCreate(bms_can::can_read_task_static, "bms_can", 3000, nullptr, 1, &bms_can::can_task_handle);
 	// Task can_task = new Task("can_task", can_read_task, 1, 16);
 	//  Initialize configuration structures using macro initializers
-	// can_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_5, gpio_num_t::GPIO_NUM_4, TWAI_MODE_LISTEN_ONLY);
-	// can_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_5, gpio_num_t::GPIO_NUM_35, TWAI_MODE_NORMAL);
-	// can_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_13, gpio_num_t::GPIO_NUM_35, TWAI_MODE_NORMAL);
-	// can_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_13, gpio_num_t::GPIO_NUM_36, TWAI_MODE_NORMAL);
 	// ESP32S2 TFT
-	// twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_38, gpio_num_t::GPIO_NUM_39, TWAI_MODE_NORMAL);
+	//twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_38, gpio_num_t::GPIO_NUM_39, TWAI_MODE_NORMAL);
+	// ESP32S3 
 	twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_2, gpio_num_t::GPIO_NUM_1, TWAI_MODE_NORMAL);
 	// g_config.mode = TWAI_MODE_NORMAL;
 	twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
@@ -447,33 +443,6 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 	break;
 #endif // BMS
 
-#ifdef DIEBIE
-	case COMM_FW_VERSION_DIEBIE:
-	{
-		// BLog_i(TAG, "CAN  process packet: COMM_FW_VERSIONDIEBIE\n");
-
-		int32_t ind = 0;
-		uint8_t send_buffer[50];
-		send_buffer[ind++] = COMM_FW_VERSION;
-		send_buffer[ind++] = DIEBIE_VERSION_MAJOR;
-		send_buffer[ind++] = DIEBIE_VERSION_MINOR;
-
-		strcpy((char *)(send_buffer + ind), DIEBIE_HW_NAME);
-		ind += strlen(HW_NAME) + 1;
-
-		uint64_t esp_chip_id[2];
-		esp_chip_id[0] = ESP.getEfuseMac();
-
-		memcpy(send_buffer + ind, &esp_chip_id[0], 12);
-		ind += 12;
-
-		// reply_func(send_buffer, ind);
-		can_send_buffer(rx_buffer_last_id, send_buffer, ind, 1);
-		BLog_d(TAG, "Sent COMM_FW_VERSION_DIEBIE to %d", rx_buffer_last_id);
-	}
-	break;
-
-#endif // DIEBIE
 
 #ifdef BMS_COMMANDS
 
@@ -562,76 +531,6 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 	break;
 #endif // BMS_COMMANDS
 
-#ifdef DIEBIE
-	// Emulate DiEBie to make metr.at happy
-	case COM_GET_BMS_CELLS_DIEBIE:
-	{
-		int32_t ind;
-		ind = 0;
-		uint8_t send_buffer_global[256];
-		send_buffer_global[ind++] = 51; // original COM_GET_BMS_CELLS = 51
-
-		send_buffer_global[ind++] = (uint8_t)bms.getNumberCells();
-
-		for (int cell = 0; cell < bms.getNumberCells(); cell++)
-		{
-			if (bms.isCellBalancing(cell))
-			{
-				buffer_append_float16(send_buffer_global, bms_if_get_v_cell(cell) * -1.0f, 1e3, &ind);
-			}
-			else
-			{
-				buffer_append_float16(send_buffer_global, bms_if_get_v_cell(cell), 1e3, &ind);
-			}
-		}
-
-		send_buffer_global[ind++] = CAN_ADDR_DIEBIE;
-		commands_send_packet(send_buffer_global, ind);
-		BLog_d(TAG, "Sent COMM_BMS_GET_CELLS_DIEBIE");
-	}
-	break;
-
-	case COMM_GET_VALUES_DIEBIE:
-	{
-		int32_t ind = 0;
-
-		uint8_t send_buffer_global[256];
-
-		send_buffer_global[ind++] = COMM_GET_VALUES;
-
-		buffer_append_float32(send_buffer_global, bms_if_get_v_tot(), 1e3, &ind);
-		buffer_append_float32(send_buffer_global, bms_if_get_i_in(), 1e3, &ind);
-
-		send_buffer_global[ind++] = (uint8_t)(bms_if_get_soc() * 100);
-
-		buffer_append_float32(send_buffer_global, bms_if_get_v_cell_max(), 1e3, &ind);
-		buffer_append_float32(send_buffer_global, bms_if_get_v_cell_avg(), 1e3, &ind);
-		buffer_append_float32(send_buffer_global, bms_if_get_v_cell_min(), 1e3, &ind);
-		buffer_append_float32(send_buffer_global, bms_if_get_v_cell_max() - bms_if_get_v_cell_min(), 1e3, &ind);
-
-		buffer_append_float16(send_buffer_global, 0, 1e3, &ind);
-		buffer_append_float16(send_buffer_global, 0, 1e3, &ind);
-		buffer_append_float16(send_buffer_global, 0, 1e3, &ind);
-		buffer_append_float16(send_buffer_global, 0, 1e3, &ind);
-		buffer_append_float16(send_buffer_global, 0, 1e3, &ind);
-		buffer_append_float16(send_buffer_global, 0, 1e3, &ind);
-
-		buffer_append_float16(send_buffer_global, bms_if_get_temp(0), 1e1, &ind);
-		buffer_append_float16(send_buffer_global, bms_if_get_temp(1), 1e1, &ind);
-		buffer_append_float16(send_buffer_global, bms_if_get_temp_ic(), 1e1, &ind);
-		buffer_append_float16(send_buffer_global, bms_if_get_temp_ic(), 1e1, &ind);
-
-		send_buffer_global[ind++] = 0;
-		send_buffer_global[ind++] = 0;
-		send_buffer_global[ind++] = 0;
-
-		send_buffer_global[ind++] = CAN_ADDR_DIEBIE;
-		commands_send_packet(send_buffer_global, ind);
-		BLog_d(TAG, "Sent COMM_BMS_GET_VALUES_DIEBIE");
-	}
-	break;
-
-#endif // DIEBIE
 
 	// bms_can:commands_process_packet: CAN  Terminal: 14626f6f
 	case COMM_TERMINAL_CMD:
@@ -674,30 +573,8 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 	//  sprintf(buffer, "CAN  %x decode id %x cmd %x\n", CAN_ADDR, id, cmd);
 	//  TelnetStream.println(buffer);
 
-#ifdef DIEBIE
-	// Emulate DieBie
-	// TODO: sends cmd 51, COMM_GET_BMS_CELLS which we remap to COM_GET_BMS_CELLS_DIEBIE
-	// TODO: maybe should also check if this is a cmd short buffer
-	if (id == CAN_ADDR_DIEBIE)
-	{
-		unsigned int packet_id = (data8[2] & 0xFF);
-		if (packet_id == COMM_FW_VERSION)
-		{
-			data8[2] = COMM_FW_VERSION_DIEBIE;
-		}
-		else if (packet_id == 51)
-		{
-			data8[2] = COM_GET_BMS_CELLS_DIEBIE;
-		}
-		else if (packet_id == COMM_GET_VALUES)
-		{
-			data8[2] = COMM_GET_VALUES_DIEBIE;
-		}
-		// BLog_i(TAG, "CAN  Diebie packet: %d:  %d %d %d\n", cmd, data8[0], data8[1], data8[2]);
-	}
-#endif // DIEBIE
 
-	if (id == 255 || id == CAN_ADDR || id == CAN_ADDR_DIEBIE)
+	if (id == 255 || id == CAN_ADDR)
 	//	if (id == 255 || id == 99)
 	{
 		// BLog_i(TAG, "CAN  decode 255 or me: id %x cmd %d len %d\n", id, cmd, len);
@@ -721,7 +598,7 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 			break;
 
 		case CAN_PACKET_PROCESS_RX_BUFFER:
-			// BLog_i(TAG, "CAN  decode: CAN_PACKET_PROCESS_RX_BUFFER id %x cmd %d, len %d\n", id, cmd, len);
+			BLog_i(TAG, "CAN  decode: CAN_PACKET_PROCESS_RX_BUFFER id %x cmd %d, len %d\n", id, cmd, len);
 			// sprintf(buffer, "CAN  CAN_PACKET_PROCESS_RX_BUFFER 		id %x cmd %d\n", id, cmd);
 			//			TelnetStream.println(buffer);
 			//			TelnetStream.flush();
@@ -762,22 +639,16 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 				{
 				case 0:
 					BLog_i(TAG, "CAN  command CAN_PACKET_PROCESS_BUFFER: 0\n");
-					// TelnetStream.println("commands_process_packet");
-					// TelnetStream.flush();
 					// commands_process_packet(rx_buffer, rxbuf_len, send_packet_wrapper);
 					commands_process_packet(rx_buffer, rxbuf_len);
 					break;
 				case 1:
 					BLog_i(TAG, "CAN  command CAN_PACKET_PROCESS_BUFFER: 1\n");
-					// TelnetStream.println("commands_send_packet");
-					// TelnetStream.flush();
 					// commands_send_packet_can_last(data8 + ind, len - ind);
 					commands_send_packet(rx_buffer, rxbuf_len);
 					break;
 				case 2:
 					BLog_i(TAG, "CAN  command CAN_PACKET_PROCESS_BUFFER: 2\n");
-					// TelnetStream.println("commands_process_packet");
-					// TelnetStream.flush();
 					// commands_process_packet(rx_buffer, rxbuf_len, 0);
 					commands_process_packet(rx_buffer, rxbuf_len);
 					break;
@@ -789,16 +660,13 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 
 		case CAN_PACKET_PROCESS_SHORT_BUFFER:
 
-			// BLog_i(TAG, "CAN  decode: CAN_PACKET_PROCESS_SHORT_BUFFER id %x cmd %x  len %d\n", id, cmd, len);
+			BLog_i(TAG, "CAN  decode: CAN_PACKET_PROCESS_SHORT_BUFFER id %x cmd %x  len %d\n", id, cmd, len);
 
 			ind = 0;
 			rx_buffer_last_id = data8[ind++];
 			commands_send = data8[ind++];
 
-			// BLog_i(TAG, "CAN  decode: CAN_PACKET_PROCESS_SHORT_BUFFER id %x cmd %x  cmd_send %x len %d\n", id, cmd, commands_send, len);
-			//  sprintf(buffer, "CAN  CAN_PACKET_PROCESS_SHORT_BUFFER 		id %x cmd %x cmd_send %x\n", id, cmd, commands_send);
-			//  TelnetStream.println(buffer);
-			//  TelnetStream.flush();
+			BLog_i(TAG, "CAN  decode: CAN_PACKET_PROCESS_SHORT_BUFFER id %x cmd %x  cmd_send %x len %d\n", id, cmd, commands_send, len);
 
 			if (is_replaced)
 			{
@@ -815,22 +683,16 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 			switch (commands_send)
 			{
 			case 0:
-				// BLog_i(TAG, "CAN  command CAN_PACKET_PROCESS_SHORT_BUFFER: 0a\n");
-				//  TelnetStream.println("commands_process_packet");
-				//  TelnetStream.flush();
+				BLog_i(TAG, "CAN  command CAN_PACKET_PROCESS_SHORT_BUFFER: 0a\n");
 				// commands_process_packet(data8 + ind, len - ind, send_packet_wrapper);
 				commands_process_packet(data8 + ind, len - ind);
 				break;
 			case 1:
 				BLog_i(TAG, "CAN  command CAN_PACKET_PROCESS_SHORT_BUFFER: 1a\n");
-				// TelnetStream.println("commands_send_packet");
-				// TelnetStream.flush();
 				// commands_process_packet
 				commands_send_packet(data8 + ind, len - ind);
 				break;
 			case 2:
-				// TelnetStream.println("commands_process_packet");
-				// TelnetStream.flush();
 				// commands_process_packet(data8 + ind, len - ind, 0);
 				BLog_i(TAG, "CAN  command CAN_PACKET_PROCESS_SHORT_BUFFER: 2a\n");
 				commands_process_packet(data8 + ind, len - ind);
@@ -841,9 +703,7 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 			break;
 
 		case CAN_PACKET_PING:
-			// BLog_i(TAG, "CAN  decode: CAN_PACKET_PING %x\n", (uint32_t)data8[0] & 0xFF);
-			//  TelnetStream.println("ping");
-			//  TelnetStream.flush();
+			BLog_i(TAG, "CAN  decode: CAN_PACKET_PING %x\n", (uint32_t)data8[0] & 0xFF);
 
 			uint8_t buffer[2];
 			buffer[0] = CAN_ADDR;
@@ -1351,25 +1211,6 @@ void bms_can::can_status_task()
 			((bms_if_is_charge_allowed() ? 1 : 0) << 2);
 		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BMS_SOC_SOH_TEMP_STAT << 8), buffer, send_index);
 #endif // BMS_CAN
-
-#ifdef DIEBIE
-		// Diebie
-		buffer_append_float32_auto(buffer, bms_if_get_v_tot(), &send_index);
-		buffer_append_float32_auto(buffer, bms_if_get_i_in(), &send_index);
-		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BMS_STATUS_MAIN_IV << 8), buffer, send_index);
-
-		buffer_append_float32_auto(buffer, bms_if_get_v_cell_min(), &send_index);
-		buffer_append_float32_auto(buffer, bms_if_get_v_cell_max(), &send_index);
-		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BMS_STATUS_CELLVOLTAGE << 8), buffer, send_index);
-
-		buffer_append_float16(buffer, bms_if_get_v_tot(), 1e2, &send_index);
-		buffer_append_float16(buffer, bms.getRemainingCapacityMah() / 1000.0, 1e2, &send_index);
-		buffer[send_index++] = (uint8_t)(bms_if_get_soc() * 100.0);
-		buffer[send_index++] = (uint8_t)0;
-		buffer[send_index++] = (uint8_t)0;
-		buffer[send_index++] = (uint8_t)0;
-		can_transmit_eid(CAN_ADDR | ((uint32_t)CAN_PACKET_BMS_STATUS_THROTTLE_CH_DISCH_BOOL << 8), buffer, send_index);
-#endif // DIEBIE
 
 		// TODO: allow config
 		int32_t sleep_time = 1000 / 1;
