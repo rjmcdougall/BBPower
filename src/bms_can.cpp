@@ -14,6 +14,8 @@
 
 static constexpr const char *TAG = "bms_can";
 
+int bms_can::rx_recovery_cnt;
+
 #define CAN_DEBUG 1
 
 #define CAN_ADDR 9
@@ -52,7 +54,7 @@ bms_can::bms_can()
 {
 }
 
-void bms_can::begin(void)
+void bms_can::begin(gpio_num_t rx, gpio_num_t tx)
 {
 	if (CAN_DEBUG)
 		Serial.printf(TAG, "Initializing bms_can...");
@@ -60,7 +62,7 @@ void bms_can::begin(void)
 		BLog_d(TAG, "Initializing bms_can...");
 		//{ String logstr = TAG + String(":") + String(__func__) + ": " + String("Initializing bms_can..."); Serial.print(logstr.c_str()); }
 	}
-	initCAN();
+	initCAN(rx, tx);
 }
 
 TaskHandle_t bms_can::can_read_task_handle = nullptr;
@@ -127,7 +129,7 @@ void enable_alerts()
 	}
 }
 
-void bms_can::initCAN()
+void bms_can::initCAN(gpio_num_t rx, gpio_num_t tx)
 {
 	for (int i = 0; i < CAN_STATUS_MSGS_TO_STORE; i++)
 	{
@@ -148,15 +150,18 @@ void bms_can::initCAN()
 	// xTaskCreate(bms_can::can_read_task_static, "bms_can", 3000, nullptr, 1, &bms_can::can_task_handle);
 	// Task can_task = new Task("can_task", can_read_task, 1, 16);
 	//  Initialize configuration structures using macro initializers
-	// ESP32S2 TFT
-	//twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_38, gpio_num_t::GPIO_NUM_39, TWAI_MODE_NORMAL);
+	twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(tx, rx, TWAI_MODE_NORMAL);
+	//twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_38, gpio_num_t::GPIO_NUM_4, TWAI_MODE_NORMAL);
 	// ESP32S3 
-	twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_2, gpio_num_t::GPIO_NUM_1, TWAI_MODE_NORMAL);
+	//twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_2, gpio_num_t::GPIO_NUM_1, TWAI_MODE_NORMAL);
 	// g_config.mode = TWAI_MODE_NORMAL;
 	twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
 	// twai_timing_config_t t_config = TWAI_TIMING_CONFIG_50KBITS();
 	twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 	// pinMode(GPIO_NUM_32, INPUT_PULLDOWN);
+	
+	g_config.tx_queue_len = 20;
+	g_config.rx_queue_len = 20;
 
 	// Install CAN driver
 	if (twai_driver_install(&g_config, &t_config, &f_config) == ESP_OK)
@@ -185,11 +190,13 @@ void bms_can::initCAN()
 
 	// TODO: move these to init only once
 	BLog_i(TAG, "CAN  init task queue_canrx = %lx\n", &bms_can::queue_canrx);
-	xTaskCreate(bms_can::can_read_task_static, "bms_can_read", 16384, nullptr, 1, nullptr);
+	xTaskCreatePinnedToCore(bms_can::can_read_task_static, "bms_can_read", 16384, nullptr, configMAX_PRIORITIES - 1, nullptr,  tskNO_AFFINITY);
 	xTaskCreate(bms_can::can_process_task_static, "bms_can_process", 16384, nullptr, 1, nullptr);
-	vTaskDelay(pdMS_TO_TICKS(5000));
+	//vTaskDelay(pdMS_TO_TICKS(5000));
 	xTaskCreate(bms_can::can_status_task_static, "bms_can_status", 16384, nullptr, 1, nullptr);
 	xTaskCreate(bms_can::can_command_task_static, "bms_can_command", 16384, nullptr, 1, nullptr);
+	//xTaskCreatePinnedToCore(rx_task, "can_rx", 1024, NULL, configMAX_PRIORITIES - 1, NULL, tskNO_AFFINITY);
+
 }
 
 // TODO: For power management
@@ -202,7 +209,7 @@ void bms_can::sleep_reset()
 
 void bms_can::can_read_task()
 {
-	vTaskDelay(pdMS_TO_TICKS(2000));
+	//vTaskDelay(pdMS_TO_TICKS(2000));
 	BLog_i(TAG, "CAN  starting read task\n");
 	bms_can::queue_canrx = xQueueCreate(10, sizeof(twai_message_t));
 	BLog_i(TAG, "CAN  read task queue_canrx = %lx\n", &bms_can::queue_canrx);
@@ -216,7 +223,7 @@ void bms_can::can_read_task()
 	{
 
 		// Wait for message to be received
-		esp_err_t res = twai_receive(&message, pdMS_TO_TICKS(8000));
+		esp_err_t res = twai_receive(&message, 2);
 
 		if (res == ESP_OK)
 		{
@@ -230,14 +237,39 @@ void bms_can::can_read_task()
 		else if (res == ESP_ERR_TIMEOUT)
 		{
 			/// ignore the timeout or do something
-			// BLog_i(TAG, "Timeout");
+			//BLog_i(TAG, "Timeout");
+		}
+		twai_status_info_t status;
+		twai_get_status_info(&status);
+		if (status.state == TWAI_STATE_BUS_OFF || status.state == TWAI_STATE_RECOVERING) {
+			BLog_i(TAG, "Recovery in progress");
+			twai_initiate_recovery();
+
+			int timeout = 1500;
+			while (status.state == TWAI_STATE_BUS_OFF || status.state == TWAI_STATE_RECOVERING) {
+				vTaskDelay(1);
+				twai_get_status_info(&status);
+				timeout--;
+
+				//if (stop_threads || stop_rx || timeout == 0) {
+				if (timeout == 0) {
+					break;
+				}
+			}
+			BLog_i(TAG, "Recovery restarting CAN");
+
+//			if (!stop_threads && !stop_rx) {
+			twai_start();
+//			}
+
+			rx_recovery_cnt++;
 		}
 	}
 }
 
 void bms_can::can_process_task()
 {
-	vTaskDelay(pdMS_TO_TICKS(2000));
+	//	vTaskDelay(pdMS_TO_TICKS(2000));
 	BLog_i(TAG, "CAN  starting process task\n");
 	BLog_i(TAG, "CAN  process task queue_canrx = %lx\n", &bms_can::queue_canrx);
 	BLog_i(TAG, "CAN  process task queue_canrx contents = %lx\n", bms_can::queue_canrx);
@@ -970,6 +1002,7 @@ void bms_can::can_transmit_eid(uint32_t id, const uint8_t *data, int len)
 		BLog_i(TAG, "CAN tx failed");
 		// return;
 
+		/*
 		uint32_t alerts = 0;
 		BLog_i(TAG, "CAN reading alerts");
 		twai_read_alerts(&alerts, pdMS_TO_TICKS(1000));
@@ -1026,6 +1059,7 @@ void bms_can::can_transmit_eid(uint32_t id, const uint8_t *data, int len)
 			// put can in start state again and re-enable alert monitoring
 			twai_start();
 		}
+			*/
 	}
 	else
 	{
@@ -1049,7 +1083,7 @@ void bms_can::can_transmit_eid(uint32_t id, const uint8_t *data, int len)
 
 void bms_can::can_status_task()
 {
-	vTaskDelay(pdMS_TO_TICKS(2000));
+	//vTaskDelay(pdMS_TO_TICKS(2000));
 
 	for (;;)
 	{

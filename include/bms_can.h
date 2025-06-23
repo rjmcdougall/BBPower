@@ -365,7 +365,7 @@ class bms_can
 {
 public:
 	bms_can();
-	static void begin(void);
+	static void begin(gpio_num_t rx, gpio_num_t tx);
 	static int rxcnt(void);
 	static int txcnt(void);
 	static float vescRpm();
@@ -373,7 +373,7 @@ public:
 	static void commands_printf(const char* format, ...);
 
 private:
-	static void initCAN();
+	static void initCAN(gpio_num_t rx, gpio_num_t tx);
 	static void can_read_task_static(void *param);
 	static void can_read_task();
 	static void can_process_task_static(void *param);
@@ -418,6 +418,7 @@ private:
 	static uint8_t rx_buffer[RX_BUFFER_SIZE];
 	static unsigned int rx_buffer_last_id;
 	static uint8_t command_buffer[RX_BUFFER_SIZE];
+	static int rx_recovery_cnt;
 
 	// TODO: move these to a BMS accessor
 	static float bms_if_get_v_tot();

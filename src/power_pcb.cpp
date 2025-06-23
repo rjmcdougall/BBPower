@@ -1,6 +1,7 @@
 #include "burner_power.h"
 
-static constexpr const char *TAG = "powerpcb";
+
+static constexpr const char *TAG = "power_pcb";
 
 static boolean headlight_state = false;
 static boolean brain_state = false;
@@ -8,20 +9,6 @@ static boolean led_master_state = false;
 static boolean led_state = false;
 static boolean amp_state = false;
 static boolean auto_state = true;
-
-#ifdef ESP8266
-#define HEADLIGHT_ON 12
-#define LEG_REG_ENABLE 13
-#define REG_5V_ENABLE 15
-#define LEG_REG_RELAY_OFF 16
-#define AMP_RELAY_OFF 0
-#else
-#define HEADLIGHT_ON 12
-#define LEG_REG_DISABLE 11
-#define REG_5V_DISABLE 10
-#define LEG_REG_RELAY_OFF 9
-#define AMP_RELAY_OFF 6
-#endif
 
 void powerpcb_init()
 {
@@ -43,6 +30,9 @@ void powerpcb_init()
 
     pinMode(REG_5V_DISABLE, OUTPUT); // 5V REG ENALE HIGH=OFF
     digitalWrite(REG_5V_DISABLE, LOW);
+
+    pinMode(FUD_BUTTON, INPUT_PULLUP);
+
 }
 
 void set_headlight(boolean state)
@@ -65,7 +55,7 @@ void set_led_reg(boolean state)
 
 void set_led_master(boolean state)
 {
-    led_state = state;
+    led_master_state = state;
     digitalWrite(LEG_REG_RELAY_OFF, state ? LOW : HIGH);
 }
 
@@ -114,4 +104,12 @@ boolean get_amp()
     return amp_state;
 }
 
-
+boolean get_fud_button() {
+    //int fud = digitalRead(FUD_BUTTON);
+    int fud = analogRead(FUD_BUTTON);
+    //BLog_d(TAG, "fud = %s", digitalRead(FUD_BUTTON) == HIGH ? "HIGH" : "LOW");
+    BLog_d(TAG, "fud = %d", fud);
+    //BLog_d(TAG, "fud = %d", analogRead(FUD_BUTTON));
+    //return (digitalRead(FUD_BUTTON) == LOW);
+    return false;
+}

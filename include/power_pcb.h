@@ -8,28 +8,41 @@
 // Include the core Arduino library for standard types and functions
 #include <Arduino.h>
 
-//==============================================================================
-// Pin Definitions for Different Microcontrollers
-//==============================================================================
+#define ESP32S3 1
+
 // Define hardware pin assignments based on the compilation target.
-#ifdef ESP8266
+#if defined(ESP8266)
     #define HEADLIGHT_ON        12
     #define LEG_REG_ENABLE      13  
     #define REG_5V_ENABLE       15  
     #define LEG_REG_RELAY_OFF   16
     #define AMP_RELAY_OFF       0
-#else // Defaulting to ESP32 or other boards
+    #define AMP_RELAY_OFF       11
+    #define FUD_BUTTON          16
+#elif defined(ESP32S3) // 
     #define HEADLIGHT_ON        12
     #define LEG_REG_DISABLE     11
     #define REG_5V_DISABLE      10
     #define LEG_REG_RELAY_OFF   9
     #define AMP_RELAY_OFF       6
+    #define FUD_BUTTON          16
+#elif defined(ESP32S2) // Defaulting to ESP32 or other boards
+    #define HEADLIGHT_ON        12
+    #define LEG_REG_DISABLE     11
+    #define REG_5V_DISABLE      10
+    #define LEG_REG_RELAY_OFF   9
+    #define AMP_RELAY_OFF       6
+    #define FUD_BUTTON          16
+#elif defined(ESP32S3tft) // Defaulting to ESP32 or other boards
+    #define HEADLIGHT_ON        12
+    #define LEG_REG_DISABLE     11
+    #define REG_5V_DISABLE      10
+    #define LEG_REG_RELAY_OFF   9
+    #define AMP_RELAY_OFF       6
+    #define FUD_BUTTON          16
+#else  
+    DIE
 #endif
-
-
-//==============================================================================
-// Function Prototypes (Public API)
-//==============================================================================
 
 /**
  * @brief Initializes all pins for the power PCB to a safe default state.
@@ -110,6 +123,13 @@ boolean get_auto();
  * @return The current state (true for ON, false for OFF).
  */
 boolean get_amp();
+
+/**
+ * @brief Gets the state of the fud button.
+ * @return The current state (true for PRESSED, false for NOT PRESSED).
+ */
+boolean get_fud_button();
+
 
 
 #endif // POWER_PCB_H

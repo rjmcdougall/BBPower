@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include "bms_can.h"
 #include "ina229.h"
+#include "power_pcb.h"
 
 #include <ESP32Logger.h>
 
@@ -42,5 +43,8 @@
 
 extern bms_can can;
 extern ina229 ina;
+
+
+#define bool_to_str(x) (x ? "true" : "false")
 
 #endif // _burner_power_h

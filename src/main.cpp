@@ -3,7 +3,6 @@
 #include <FastLED.h>
 #include "burner_power.h"
 #include "ina229.h"
-#include "powerpcb.h"
 static const int kbrainSleepSeconds = 100000;
 
 // #define NEOPIXEL_POWER 21
@@ -25,6 +24,7 @@ void setup()
 {
     delay(1000);
     Serial.begin(460800);
+    powerpcb_init();
   
     FastLED.addLeds<NEOPIXEL, PIN_NEOPIXEL>(leds, 1);
 
@@ -35,7 +35,8 @@ void setup()
     FastLED.show();
 
     Serial.println("starting canbus...");
-    can.begin();
+	// ESP32S2 TFT
+    can.begin(gpio_num_t::GPIO_NUM_39, gpio_num_t::GPIO_NUM_38);
     ina.begin();
     delay(100);
 
@@ -54,6 +55,8 @@ uint32_t last_active_time = 0;
 void loop()
 {
 
+    uint32_t fud_pressed = 0;
+
     delay(100);
 
     if (get_auto())
@@ -64,6 +67,7 @@ void loop()
         leds[0] = CRGB::Black;
         FastLED.show();
         delay(100);
+
 
         float voltage = ina.vBus();
         float current = ina.current();
@@ -77,6 +81,24 @@ void loop()
         delay(100);
         leds[0] = CRGB::Black;
         FastLED.show();
+
+        // FUD button with debounce
+        if (get_fud_button()) {
+            fud_pressed++;
+        } else {
+            if (fud_pressed > 0) {
+                fud_pressed--;
+            }
+        }
+
+        if (fud_pressed > 3) {
+            BLog_i(TAG, "fud_pressed");
+            fud_pressed = 0;
+            set_brain_reg(false);
+            delay(2000);
+            set_brain_reg(false);
+        }
+
 
         if (can.vescRpm() > 0)
         {

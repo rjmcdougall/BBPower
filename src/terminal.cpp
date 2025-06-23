@@ -1,5 +1,4 @@
 #include "burner_power.h"
-#include "powerpcb.h"
 
 static constexpr const char *TAG = "terminal";
 
