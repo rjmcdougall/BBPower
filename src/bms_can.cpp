@@ -189,10 +189,11 @@ void bms_can::initCAN(gpio_num_t rx, gpio_num_t tx)
 	}
 
 	// TODO: move these to init only once
+	// TODO: ensure can starts in right sequence
 	BLog_i(TAG, "CAN  init task queue_canrx = %lx\n", &bms_can::queue_canrx);
 	xTaskCreatePinnedToCore(bms_can::can_read_task_static, "bms_can_read", 16384, nullptr, configMAX_PRIORITIES - 1, nullptr,  tskNO_AFFINITY);
 	xTaskCreate(bms_can::can_process_task_static, "bms_can_process", 16384, nullptr, 1, nullptr);
-	//vTaskDelay(pdMS_TO_TICKS(5000));
+	vTaskDelay(pdMS_TO_TICKS(5000));
 	xTaskCreate(bms_can::can_status_task_static, "bms_can_status", 16384, nullptr, 1, nullptr);
 	xTaskCreate(bms_can::can_command_task_static, "bms_can_command", 16384, nullptr, 1, nullptr);
 	//xTaskCreatePinnedToCore(rx_task, "can_rx", 1024, NULL, configMAX_PRIORITIES - 1, NULL, tskNO_AFFINITY);
@@ -209,9 +210,9 @@ void bms_can::sleep_reset()
 
 void bms_can::can_read_task()
 {
-	//vTaskDelay(pdMS_TO_TICKS(2000));
 	BLog_i(TAG, "CAN  starting read task\n");
 	bms_can::queue_canrx = xQueueCreate(10, sizeof(twai_message_t));
+	vTaskDelay(pdMS_TO_TICKS(1000));
 	BLog_i(TAG, "CAN  read task queue_canrx = %lx\n", &bms_can::queue_canrx);
 	if (bms_can::queue_canrx == nullptr)
 	{
@@ -223,7 +224,7 @@ void bms_can::can_read_task()
 	{
 
 		// Wait for message to be received
-		esp_err_t res = twai_receive(&message, 2);
+		esp_err_t res = twai_receive(&message, 20);
 
 		if (res == ESP_OK)
 		{
@@ -269,7 +270,7 @@ void bms_can::can_read_task()
 
 void bms_can::can_process_task()
 {
-	//	vTaskDelay(pdMS_TO_TICKS(2000));
+	vTaskDelay(pdMS_TO_TICKS(2000));
 	BLog_i(TAG, "CAN  starting process task\n");
 	BLog_i(TAG, "CAN  process task queue_canrx = %lx\n", &bms_can::queue_canrx);
 	BLog_i(TAG, "CAN  process task queue_canrx contents = %lx\n", bms_can::queue_canrx);
@@ -1529,4 +1530,14 @@ bool bms_can::vescActive()
 		return true;
 	}
 	return false;
+}
+
+
+void bms_can::terminal_stats() {
+		twai_status_info_t status;
+		twai_get_status_info(&status);
+		commands_printf("can rx/tx cnt: %d/%d, rx/tx q:%d/%d, rx/tx err: %d/%d, arb-lost:%d, bus-err:%d, state: %s",
+			   bms_can::rx_count, bms_can::tx_count,
+			   status.msgs_to_rx, status.msgs_to_tx, status.rx_error_counter, status.tx_error_counter, status.arb_lost_count,
+			   status.bus_error_count, ESP32_CAN_STATUS_STRINGS[status.state]);
 }

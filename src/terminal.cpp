@@ -36,6 +36,10 @@ void terminal_process_string(char *str)
         bms_can::commands_printf("headlight:  %s", get_headlight() ? "ON" : "OFF");
         bms_can::commands_printf("led_master: %s", get_led_master() ? "ON" : "OFF");
         bms_can::commands_printf("led_reg:    %s", get_led_reg() ? "ON" : "OFF");
+
+        bms_can::commands_printf("\n");
+        bms_can::terminal_stats();
+
     }
     else if (strcmp(cmd, "b1") == 0)
     {

@@ -8,10 +8,12 @@
 // Include the core Arduino library for standard types and functions
 #include <Arduino.h>
 
-#define ESP32S3 1
+
+#define FEATHERESP32 1
 
 // Define hardware pin assignments based on the compilation target.
 #if defined(ESP8266)
+    #define LED_BUILTIN 13
     #define HEADLIGHT_ON        12
     #define LEG_REG_ENABLE      13  
     #define REG_5V_ENABLE       15  
@@ -19,26 +21,41 @@
     #define AMP_RELAY_OFF       0
     #define AMP_RELAY_OFF       11
     #define FUD_BUTTON          16
+#elif defined(FEATHERESP32) // 
+    #define LED_BUILTIN 13
+    #define INA_CS              gpio_num_t::GPIO_NUM_4
+    #define CANBUS_TX           gpio_num_t::GPIO_NUM_17
+    #define CANBUS_RX           gpio_num_t::GPIO_NUM_16
+    #define LEG_REG_RELAY_OFF   32
+    #define AMP_RELAY_OFF       15
+    #define REG_5V_DISABLE      33
+    #define LEG_REG_DISABLE     27
+    #define HEADLIGHT_ON        12
+    #define FUD_BUTTON          2
 #elif defined(ESP32S3) // 
+    #define LED_BUILTIN 13
     #define HEADLIGHT_ON        12
     #define LEG_REG_DISABLE     11
     #define REG_5V_DISABLE      10
-    #define LEG_REG_RELAY_OFF   9
-    #define AMP_RELAY_OFF       6
+    #define LEG_REG_RELAY_OFF   6
+    #define AMP_RELAY_OFF       9
     #define FUD_BUTTON          16
 #elif defined(ESP32S2) // Defaulting to ESP32 or other boards
+    #define LED_BUILTIN 13
     #define HEADLIGHT_ON        12
     #define LEG_REG_DISABLE     11
     #define REG_5V_DISABLE      10
-    #define LEG_REG_RELAY_OFF   9
-    #define AMP_RELAY_OFF       6
+    #define LEG_REG_RELAY_OFF   6
+    #define AMP_RELAY_OFF       9
     #define FUD_BUTTON          16
-#elif defined(ESP32S3tft) // Defaulting to ESP32 or other boards
+#elif defined(ESP32S3tft) 
+    #define INA_CS              gpio_num_t::GPIO_NUM_8
+    #define LED_BUILTIN 13
     #define HEADLIGHT_ON        12
     #define LEG_REG_DISABLE     11
     #define REG_5V_DISABLE      10
-    #define LEG_REG_RELAY_OFF   9
-    #define AMP_RELAY_OFF       6
+    #define LEG_REG_RELAY_OFF   6
+    #define AMP_RELAY_OFF       9
     #define FUD_BUTTON          16
 #else  
     DIE

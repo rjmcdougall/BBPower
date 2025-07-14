@@ -371,6 +371,7 @@ public:
 	static float vescRpm();
 	static bool vescActive();
 	static void commands_printf(const char* format, ...);
+	static void terminal_stats();
 
 private:
 	static void initCAN(gpio_num_t rx, gpio_num_t tx);

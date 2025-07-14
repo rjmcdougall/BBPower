@@ -1,5 +1,6 @@
 #include "spi_dev.h"
 #include "ina229.h"
+#include "power_pcb.h"
 
 /*
 ╔════════════════╤═══════════════════╤════════════════════╤════════════════════╤════════════════════╗
@@ -189,7 +190,7 @@ void ina229::begin()
 
     //pinMode(A5, OUTPUT);
     //s.begin(spi_s, GPIO_NUM_8);
-    s.begin(GPIO_NUM_8);
+    s.begin(INA_CS);
 //#ifdef NONO
     /* Reset all registers are to default values */
     Reset();

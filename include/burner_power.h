@@ -1,16 +1,18 @@
 
 #define ESP32DEBUGGING
-#include "esp_log.h"
+
 #include <Arduino.h>
+//#include "esp_log.h"
 #include <Wire.h>
 #include "bms_can.h"
 #include "ina229.h"
 #include "power_pcb.h"
 
-#include <ESP32Logger.h>
+//#include <ESP32Logger.h>
 
 #ifndef _burner_power_h
 #define _burner_power_h
+
 
 #define USEPRINTF 1
 
