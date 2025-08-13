@@ -31,7 +31,7 @@
     #define REG_5V_DISABLE      33
     #define LEG_REG_DISABLE     27
     #define HEADLIGHT_ON        12
-    #define FUD_BUTTON          2
+    #define FUD_BUTTON          gpio_num_t::GPIO_NUM_25
 #elif defined(ESP32S3) // 
     #define LED_BUILTIN 13
     #define HEADLIGHT_ON        12
@@ -147,6 +147,21 @@ boolean get_amp();
  */
 boolean get_fud_button();
 
+/**
+ * set pcb led
+ */
+void pcb_led_set(boolean);
 
+/**
+ * set leds on with timer
+ */
+void powerpcb_set_leds_hold(boolean);
+boolean powerpcb_get_leds_hold();
+
+/**
+ * set amp on with timer
+ */
+void powerpcb_set_amp_hold(boolean);
+boolean powerpcb_get_amp_hold();
 
 #endif // POWER_PCB_H

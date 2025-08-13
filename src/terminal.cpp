@@ -76,6 +76,11 @@ void terminal_process_string(char *str)
         set_led_reg(true);
         bms_can::commands_printf("led_reg:    %s", get_led_reg() ? "ON" : "OFF");
     }
+        else if (strcmp(cmd, "lx") == 0)
+    {
+        powerpcb_set_leds_hold(true);
+        bms_can::commands_printf("led_reg:    %s", get_led_reg() ? "ON" : "OFF");
+    }
     else if (strcmp(cmd, "l0") == 0)
     {
         set_led_reg(false);
@@ -100,7 +105,12 @@ void terminal_process_string(char *str)
         set_auto(false);
         bms_can::commands_printf("auto:       %s", get_auto() ? "ON" : "OFF");
     }
-    else
+        else if (strcmp(cmd, "ampx") == 0)
+    {
+        powerpcb_set_amp_hold(true);
+        bms_can::commands_printf("amp_hold");
+    }
+        else
     {
         bms_can::commands_printf("stats\n");
         bms_can::commands_printf("b1|0 brain on|off\n");

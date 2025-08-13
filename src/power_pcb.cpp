@@ -3,6 +3,10 @@
 
 static constexpr const char *TAG = "power_pcb";
 
+static const int kKeeponSeconds = 15;
+uint32_t last_lights_keepon_time = 0;
+uint32_t last_amp_keepon_time = 0;
+
 static boolean headlight_state = false;
 static boolean brain_state = false;
 static boolean led_master_state = false;
@@ -33,6 +37,24 @@ void powerpcb_init()
 
     pinMode(FUD_BUTTON, INPUT_PULLUP);
 
+}
+
+boolean powerpcb_get_leds_hold() {
+    //BLog_d(TAG, "last_lights_keepon_age: %d", millis() - last_lights_keepon_time)
+    return ( (last_lights_keepon_time > 0) && ((millis() - last_lights_keepon_time) < (kKeeponSeconds * 1000)));
+}
+
+boolean powerpcb_get_amp_hold() {
+    //BLog_d(TAG, "last_amp_keepon_age: %d", millis() - last_amp_keepon_time)
+    return ( (last_amp_keepon_time > 0) && ((millis() - last_amp_keepon_time) < (kKeeponSeconds * 1000)));
+}
+
+void powerpcb_set_leds_hold(boolean s) {
+    s ? last_lights_keepon_time = millis() : 0;
+}
+
+void powerpcb_set_amp_hold(boolean s) {
+     s ? last_amp_keepon_time = millis() : 0;
 }
 
 void set_headlight(boolean state)
@@ -108,8 +130,13 @@ boolean get_fud_button() {
     //int fud = digitalRead(FUD_BUTTON);
     int fud = analogRead(FUD_BUTTON);
     //BLog_d(TAG, "fud = %s", digitalRead(FUD_BUTTON) == HIGH ? "HIGH" : "LOW");
-    BLog_d(TAG, "fud = %d", fud);
+    //BLog_d(TAG, "fud = %d", fud);
     //BLog_d(TAG, "fud = %d", analogRead(FUD_BUTTON));
     //return (digitalRead(FUD_BUTTON) == LOW);
-    return false;
+    return fud > 128;
 }
+
+void pcb_led_set(boolean s) {
+    digitalWrite(LED_BUILTIN, s ? HIGH : LOW);
+}
+

@@ -1,5 +1,5 @@
 // #include <TelnetStream.h>
-//#include "bms_can.h"
+// #include "bms_can.h"
 #include "crc16.h"
 #include "buffer.h"
 #include "burner_power.h"
@@ -72,6 +72,7 @@ TaskHandle_t bms_can::can_command_task_handle = nullptr;
 QueueHandle_t bms_can::queue_canrx = nullptr;
 QueueHandle_t bms_can::queue_ping = nullptr;
 QueueHandle_t bms_can::queue_command = nullptr;
+SemaphoreHandle_t bms_can::twai_tx_mutex = nullptr;
 
 can_status_msg bms_can::stat_msgs[CAN_STATUS_MSGS_TO_STORE];
 can_status_msg_2 bms_can::stat_msgs_2[CAN_STATUS_MSGS_TO_STORE];
@@ -151,15 +152,15 @@ void bms_can::initCAN(gpio_num_t rx, gpio_num_t tx)
 	// Task can_task = new Task("can_task", can_read_task, 1, 16);
 	//  Initialize configuration structures using macro initializers
 	twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(tx, rx, TWAI_MODE_NORMAL);
-	//twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_38, gpio_num_t::GPIO_NUM_4, TWAI_MODE_NORMAL);
-	// ESP32S3 
-	//twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_2, gpio_num_t::GPIO_NUM_1, TWAI_MODE_NORMAL);
-	// g_config.mode = TWAI_MODE_NORMAL;
+	// twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_38, gpio_num_t::GPIO_NUM_4, TWAI_MODE_NORMAL);
+	//  ESP32S3
+	// twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(gpio_num_t::GPIO_NUM_2, gpio_num_t::GPIO_NUM_1, TWAI_MODE_NORMAL);
+	//  g_config.mode = TWAI_MODE_NORMAL;
 	twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS();
 	// twai_timing_config_t t_config = TWAI_TIMING_CONFIG_50KBITS();
 	twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 	// pinMode(GPIO_NUM_32, INPUT_PULLDOWN);
-	
+
 	g_config.tx_queue_len = 20;
 	g_config.rx_queue_len = 20;
 
@@ -179,25 +180,59 @@ void bms_can::initCAN(gpio_num_t rx, gpio_num_t tx)
 	enable_alerts();
 
 	// Start CAN driver
-	if (twai_start() == ESP_OK)
+	esp_err_t start_result = twai_start();
+	if (start_result == ESP_OK)
 	{
-		BLog_i(TAG, "CAN Driver started\n");
+		BLog_i(TAG, "CAN Driver started successfully");
+
+		// Verify driver state after successful start
+		twai_status_info_t init_status;
+		if (twai_get_status_info(&init_status) == ESP_OK)
+		{
+			BLog_i(TAG, "Initial CAN state: %s, rx-q:%d, tx-q:%d, rx-err:%d, tx-err:%d",
+				   ESP32_CAN_STATUS_STRINGS[init_status.state], init_status.msgs_to_rx,
+				   init_status.msgs_to_tx, init_status.rx_error_counter, init_status.tx_error_counter);
+		}
 	}
 	else
 	{
-		BLog_i(TAG, "Failed to start driver\n");
+		BLog_e(TAG, "Failed to start CAN driver. Error: %s (0x%x)", esp_err_to_name(start_result), start_result);
+
+		if (start_result == ESP_ERR_INVALID_STATE)
+		{
+			BLog_e(TAG, "Driver not installed or already started");
+		}
+		else if (start_result == ESP_FAIL)
+		{
+			BLog_e(TAG, "Hardware initialization failure - check wiring and termination");
+		}
+
+		// Try to get status even if start failed
+		twai_status_info_t failed_status;
+		if (twai_get_status_info(&failed_status) == ESP_OK)
+		{
+			BLog_e(TAG, "Failed start CAN state: %s, rx-err:%d, tx-err:%d, arb-lost:%d, bus-err:%d",
+				   ESP32_CAN_STATUS_STRINGS[failed_status.state], failed_status.rx_error_counter,
+				   failed_status.tx_error_counter, failed_status.arb_lost_count, failed_status.bus_error_count);
+		}
+	}
+
+	// Create mutex for TWAI transmit
+	twai_tx_mutex = xSemaphoreCreateMutex();
+	if (twai_tx_mutex == nullptr)
+	{
+		BLog_e(TAG, "Failed to create TWAI TX mutex");
 	}
 
 	// TODO: move these to init only once
 	// TODO: ensure can starts in right sequence
 	BLog_i(TAG, "CAN  init task queue_canrx = %lx\n", &bms_can::queue_canrx);
-	xTaskCreatePinnedToCore(bms_can::can_read_task_static, "bms_can_read", 16384, nullptr, configMAX_PRIORITIES - 1, nullptr,  tskNO_AFFINITY);
+	xTaskCreatePinnedToCore(bms_can::can_read_task_static, "bms_can_read", 16384, nullptr, configMAX_PRIORITIES - 1, nullptr, tskNO_AFFINITY);
 	xTaskCreate(bms_can::can_process_task_static, "bms_can_process", 16384, nullptr, 1, nullptr);
 	vTaskDelay(pdMS_TO_TICKS(5000));
 	xTaskCreate(bms_can::can_status_task_static, "bms_can_status", 16384, nullptr, 1, nullptr);
 	xTaskCreate(bms_can::can_command_task_static, "bms_can_command", 16384, nullptr, 1, nullptr);
-	//xTaskCreatePinnedToCore(rx_task, "can_rx", 1024, NULL, configMAX_PRIORITIES - 1, NULL, tskNO_AFFINITY);
-
+	// xTaskCreatePinnedToCore(rx_task, "can_rx", 1024, NULL, configMAX_PRIORITIES - 1, NULL, tskNO_AFFINITY);
 }
 
 // TODO: For power management
@@ -238,33 +273,68 @@ void bms_can::can_read_task()
 		else if (res == ESP_ERR_TIMEOUT)
 		{
 			/// ignore the timeout or do something
-			//BLog_i(TAG, "Timeout");
+			// BLog_i(TAG, "Timeout");
 		}
 		twai_status_info_t status;
 		twai_get_status_info(&status);
-		if (status.state == TWAI_STATE_BUS_OFF || status.state == TWAI_STATE_RECOVERING) {
-			BLog_i(TAG, "Recovery in progress");
-			twai_initiate_recovery();
+		if (status.state == TWAI_STATE_BUS_OFF || status.state == TWAI_STATE_RECOVERING)
+		{
+			//xSemaphoreTake(twai_tx_mutex, pdMS_TO_TICKS(100)) == pdTRUE
+			BLog_i(TAG, "Recovery in progress, state: %s", ESP32_CAN_STATUS_STRINGS[status.state]);
 
+			twai_initiate_recovery();
 			int timeout = 1500;
-			while (status.state == TWAI_STATE_BUS_OFF || status.state == TWAI_STATE_RECOVERING) {
+			while (status.state == TWAI_STATE_BUS_OFF || status.state == TWAI_STATE_RECOVERING)
+			{
 				vTaskDelay(1);
 				twai_get_status_info(&status);
 				timeout--;
-
-				//if (stop_threads || stop_rx || timeout == 0) {
-				if (timeout == 0) {
+				if (timeout == 0)
+				{
 					break;
 				}
 			}
-			BLog_i(TAG, "Recovery restarting CAN");
 
-//			if (!stop_threads && !stop_rx) {
 			twai_start();
-//			}
 
 			rx_recovery_cnt++;
+			vTaskDelay(pdMS_TO_TICKS(100)); // Give recovery time
 		}
+		/*
+			// Clear any pending alerts
+			uint32_t alerts;
+			twai_read_alerts(&alerts, 0); // Non-blocking read to clear alerts
+
+			// Restart the driver
+			esp_err_t restart_result = twai_start();
+			if (restart_result == ESP_OK)
+			{
+				BLog_i(TAG, "CAN Driver restarted successfully after recovery");
+			}
+			else
+			{
+				BLog_e(TAG, "Failed to restart CAN driver after recovery. Error: %s (0x%x)", esp_err_to_name(restart_result), restart_result);
+
+				// Check current driver state
+				twai_status_info_t current_status;
+				if (twai_get_status_info(&current_status) == ESP_OK)
+				{
+					BLog_e(TAG, "Current CAN state after failed restart: %s, rx-q:%d, tx-q:%d, rx-err:%d, tx-err:%d",
+						ESP32_CAN_STATUS_STRINGS[current_status.state], current_status.msgs_to_rx,
+						current_status.msgs_to_tx, current_status.rx_error_counter, current_status.tx_error_counter);
+				}
+
+				// Additional recovery attempts
+				if (restart_result == ESP_ERR_INVALID_STATE)
+				{
+					BLog_e(TAG, "Driver in invalid state - may need to uninstall and reinstall");
+				}
+				else if (restart_result == ESP_FAIL)
+				{
+					BLog_e(TAG, "Hardware failure detected during restart");
+				}
+			}
+				*/
 	}
 }
 
@@ -476,7 +546,6 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 	break;
 #endif // BMS
 
-
 #ifdef BMS_COMMANDS
 
 	case COMM_BMS_GET_VALUES:
@@ -564,7 +633,6 @@ void bms_can::commands_process_packet(unsigned char *data, unsigned int len)
 	break;
 #endif // BMS_COMMANDS
 
-
 	// bms_can:commands_process_packet: CAN  Terminal: 14626f6f
 	case COMM_TERMINAL_CMD:
 	{
@@ -605,7 +673,6 @@ void bms_can::decode_msg(uint32_t eid, uint8_t *data8, int len, bool is_replaced
 	//  char buffer[128];
 	//  sprintf(buffer, "CAN  %x decode id %x cmd %x\n", CAN_ADDR, id, cmd);
 	//  TelnetStream.println(buffer);
-
 
 	if (id == 255 || id == CAN_ADDR)
 	//	if (id == 255 || id == 99)
@@ -988,84 +1055,123 @@ void bms_can::can_transmit_eid(uint32_t id, const uint8_t *data, int len)
 		len = 8;
 	}
 
-	twai_message_t txmsg = {0};
-	// txmsg. = CAN_IDE_EXT;
-	// txmsg.flags = CAN_MSG_FLAG_EXTD; deprecated
-	// txmsg.flags = CAN_MSG_FLAG_RTR | CAN_MSG_FLAG_EXTD;
-	txmsg.identifier = id;
-	txmsg.extd = 1;
-	txmsg.data_length_code = len;
-
-	memcpy(&txmsg.data[0], &data[0], len);
-	// BLog_i(TAG, "CAN tx id %x len %d", id, len);
-	if (twai_transmit(&txmsg, pdMS_TO_TICKS(1000)) != ESP_OK)
+	// Take mutex before transmitting
+	if (twai_tx_mutex != nullptr && xSemaphoreTake(twai_tx_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
 	{
-		BLog_i(TAG, "CAN tx failed");
-		// return;
-
-		/*
+		// Check for alerts and bus status before transmitting
 		uint32_t alerts = 0;
-		BLog_i(TAG, "CAN reading alerts");
-		twai_read_alerts(&alerts, pdMS_TO_TICKS(1000));
-		BLog_i(TAG, "---Alert Read: -- : %04x", alerts);
+		twai_read_alerts(&alerts, 0); // Non-blocking read
 
-		if (alerts & TWAI_ALERT_RECOVERY_IN_PROGRESS)
+		// Check if bus is in error state
+		if (alerts & (TWAI_ALERT_BUS_OFF | TWAI_ALERT_ERR_PASS))
 		{
-			BLog_i(TAG, "Recovery in progress");
+			BLog_e(TAG, "CAN bus in error state, aborting transmission. Alerts: 0x%x", alerts);
+			xSemaphoreGive(twai_tx_mutex);
+			return;
 		}
 
-		if (alerts & TWAI_ALERT_ABOVE_ERR_WARN)
+		twai_message_t txmsg = {0};
+		// txmsg. = CAN_IDE_EXT;
+		// txmsg.flags = CAN_MSG_FLAG_EXTD; deprecated
+		// txmsg.flags = CAN_MSG_FLAG_RTR | CAN_MSG_FLAG_EXTD;
+		txmsg.identifier = id;
+		txmsg.extd = 1;
+		txmsg.data_length_code = len;
+
+		memcpy(&txmsg.data[0], &data[0], len);
+		// BLog_i(TAG, "CAN tx id %x len %d", id, len);
+		if (twai_transmit(&txmsg, pdMS_TO_TICKS(1000)) != ESP_OK)
 		{
-			BLog_i(TAG, "Surpassed Error Warning Limit");
-		}
+			BLog_i(TAG, "CAN tx failed");
 
-		if (alerts & TWAI_ALERT_ERR_PASS)
-		{
-			BLog_i(TAG, "Entered Error Passive state");
-		}
+			// Read alerts after failed transmission
+			alerts = 0;
+			twai_read_alerts(&alerts, 0);
+			BLog_e(TAG, "Transmission failed. Alerts: 0x%x", alerts);
 
-		if (alerts & TWAI_ALERT_ERR_ACTIVE)
-		{
-			BLog_i(TAG, "Entered Can Error Active");
-		}
+			// Check specific error conditions
+			if (alerts & TWAI_ALERT_BUS_OFF)
+			{
+				BLog_e(TAG, "Bus-off detected after failed transmission");
+			}
+			if (alerts & TWAI_ALERT_ERR_PASS)
+			{
+				BLog_e(TAG, "Error passive state detected after failed transmission");
+			}
+			// return;
 
-		if (alerts & TWAI_ALERT_BUS_ERROR)
-		{
-			BLog_i(TAG, "Entered Alert Bus Error");
-		}
+			/*
+			uint32_t alerts = 0;
+			BLog_i(TAG, "CAN reading alerts");
+			twai_read_alerts(&alerts, pdMS_TO_TICKS(1000));
+			BLog_i(TAG, "---Alert Read: -- : %04x", alerts);
 
-		if (alerts & TWAI_ALERT_BUS_OFF)
-		{
-			BLog_d(TAG, "Bus Off --> Initiate bus recovery");
-			twai_initiate_recovery(); // Needs 128 occurrences of bus free signal
-		}
+			if (alerts & TWAI_ALERT_RECOVERY_IN_PROGRESS)
+			{
+				BLog_i(TAG, "Recovery in progress");
+			}
 
-		// can_clear_transmit_queue();
-		//	ESP_LOGE(tag, "--> Initiate bus recovery");
-		// can_initiate_recovery();
-		// can_start();
-		//	ESP_LOGE(tag, " --> Returned from bus recovery");
-		vTaskDelay(pdMS_TO_TICKS(1000));
+			if (alerts & TWAI_ALERT_ABOVE_ERR_WARN)
+			{
+				BLog_i(TAG, "Surpassed Error Warning Limit");
+			}
 
-		if (alerts & TWAI_ALERT_BUS_RECOVERED)
-		{
-			// Bus recovery was successful
+			if (alerts & TWAI_ALERT_ERR_PASS)
+			{
+				BLog_i(TAG, "Entered Error Passive state");
+			}
 
-			// only for testing. Does not help !!
-			// esp_err_t res = can_reconfigure_alerts(alerts_enabled, NULL);
-			BLog_i(TAG, "Bus Recovered"); // %d--> restarting Can", res);
+			if (alerts & TWAI_ALERT_ERR_ACTIVE)
+			{
+				BLog_i(TAG, "Entered Can Error Active");
+			}
 
-			enable_alerts();
+			if (alerts & TWAI_ALERT_BUS_ERROR)
+			{
+				BLog_i(TAG, "Entered Alert Bus Error");
+			}
 
-			// put can in start state again and re-enable alert monitoring
-			twai_start();
-		}
+			if (alerts & TWAI_ALERT_BUS_OFF)
+			{
+				BLog_d(TAG, "Bus Off --> Initiate bus recovery");
+				twai_initiate_recovery(); // Needs 128 occurrences of bus free signal
+			}
+
+			// can_clear_transmit_queue();
+			//	ESP_LOGE(tag, "--> Initiate bus recovery");
+			// can_initiate_recovery();
+			// can_start();
+			//	ESP_LOGE(tag, " --> Returned from bus recovery");
+			vTaskDelay(pdMS_TO_TICKS(1000));
+
+			if (alerts & TWAI_ALERT_BUS_RECOVERED)
+			{
+				// Bus recovery was successful
+
+				// only for testing. Does not help !!
+				// esp_err_t res = can_reconfigure_alerts(alerts_enabled, NULL);
+				BLog_i(TAG, "Bus Recovered"); // %d--> restarting Can", res);
+
+				enable_alerts();
+
+				// put can in start state again and re-enable alert monitoring
+				twai_start();
+			}
 			*/
+		}
+		else
+		{
+			// BLog_i(TAG, "CAN tx success id %x len %d", id, len);
+			tx_count++;
+		}
+
+		// Release mutex after transmitting
+		xSemaphoreGive(twai_tx_mutex);
 	}
 	else
 	{
-		// BLog_i(TAG, "CAN tx success id %x len %d", id, len);
-		tx_count++;
+		// Could not acquire mutex
+		BLog_e(TAG, "Failed to acquire TWAI TX mutex");
 	}
 	// BLog_i(TAG, "CAN tx end");
 }
@@ -1082,9 +1188,11 @@ void bms_can::can_transmit_eid(uint32_t id, const uint8_t *data, int len)
 	  //vTaskDelay(1000 / portTICK_PERIOD_MS);
 	*/
 
+#define NUM_TWAI_STATES 4
+
 void bms_can::can_status_task()
 {
-	//vTaskDelay(pdMS_TO_TICKS(2000));
+	// vTaskDelay(pdMS_TO_TICKS(2000));
 
 	for (;;)
 	{
@@ -1094,10 +1202,14 @@ void bms_can::can_status_task()
 		// check the health of the bus
 		twai_status_info_t status;
 		twai_get_status_info(&status);
-		BLog_i(TAG, " can_status_task %d/%d, rx-q:%d, tx-q:%d, rx-err:%d, tx-err:%d, arb-lost:%d, bus-err:%d, state: %s",
-			   bms_can::rx_count, bms_can::tx_count,
-			   status.msgs_to_rx, status.msgs_to_tx, status.rx_error_counter, status.tx_error_counter, status.arb_lost_count,
-			   status.bus_error_count, ESP32_CAN_STATUS_STRINGS[status.state]);
+		if (status.state >= 0 && status.state < NUM_TWAI_STATES)
+		{
+			//			BLog_i(TAG, " can_status_task %d/%d, rx-q:%d, tx-q:%d, rx-err:%d, tx-err:%d, arb-lost:%d, bus-err:%d, state: %s",
+			BLog_i(TAG, " can_status_task rx-q:%d, tx-q:%d, rx-err:%d, tx-err:%d, arb-lost:%d, bus-err:%d, state: %s",
+				   // bms_can::rx_count, bms_can::tx_count,
+				   status.msgs_to_rx, status.msgs_to_tx, status.rx_error_counter, status.tx_error_counter, status.arb_lost_count,
+				   status.bus_error_count, ESP32_CAN_STATUS_STRINGS[status.state]);
+		}
 		if (status.state == TWAI_STATE_STOPPED)
 		{
 			BLog_i(TAG, "CAN Driver is stopped!\n");
@@ -1289,7 +1401,7 @@ void bms_can::can_command_task()
 				data[len] = '\0';
 				// hMtxLock(&terminal_mutex);
 				BLog_i(TAG, "CAN  Terminal Command: %s\n", (char *)data);
-				terminal_process_string((char*)data);
+				terminal_process_string((char *)data);
 				// chMtxUnlock(&terminal_mutex);
 				break;
 
@@ -1320,23 +1432,23 @@ void bms_can::can_command_task()
 	}
 }
 
-
-void bms_can::commands_printf(const char* format, ...) {
+void bms_can::commands_printf(const char *format, ...)
+{
 
 	va_list arg;
-	va_start (arg, format);
+	va_start(arg, format);
 	int len;
 	static char print_buffer[255];
 
 	print_buffer[0] = COMM_PRINT;
 	len = vsnprintf(print_buffer + 1, 254, format, arg);
-	va_end (arg);
+	va_end(arg);
 
-	if(len > 0) {
-		commands_send_packet((unsigned char*)print_buffer,
-				(len < 254) ? len + 1 : 255);
+	if (len > 0)
+	{
+		commands_send_packet((unsigned char *)print_buffer,
+							 (len < 254) ? len + 1 : 255);
 	}
-
 }
 
 #ifdef BMS_CAN
@@ -1532,12 +1644,12 @@ bool bms_can::vescActive()
 	return false;
 }
 
-
-void bms_can::terminal_stats() {
-		twai_status_info_t status;
-		twai_get_status_info(&status);
-		commands_printf("can rx/tx cnt: %d/%d, rx/tx q:%d/%d, rx/tx err: %d/%d, arb-lost:%d, bus-err:%d, state: %s",
-			   bms_can::rx_count, bms_can::tx_count,
-			   status.msgs_to_rx, status.msgs_to_tx, status.rx_error_counter, status.tx_error_counter, status.arb_lost_count,
-			   status.bus_error_count, ESP32_CAN_STATUS_STRINGS[status.state]);
+void bms_can::terminal_stats()
+{
+	twai_status_info_t status;
+	twai_get_status_info(&status);
+	commands_printf("can rx/tx cnt: %d/%d, rx/tx q:%d/%d, rx/tx err: %d/%d, arb-lost:%d, bus-err:%d, state: %s",
+					bms_can::rx_count, bms_can::tx_count,
+					status.msgs_to_rx, status.msgs_to_tx, status.rx_error_counter, status.tx_error_counter, status.arb_lost_count,
+					status.bus_error_count, ESP32_CAN_STATUS_STRINGS[status.state]);
 }

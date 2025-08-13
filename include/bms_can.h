@@ -405,6 +405,7 @@ private:
 	static QueueHandle_t queue_canrx;
 	static QueueHandle_t queue_ping;
 	static QueueHandle_t queue_command;
+	static SemaphoreHandle_t twai_tx_mutex;
 	static can_status_msg stat_msgs[CAN_STATUS_MSGS_TO_STORE];
 	static can_status_msg_2 stat_msgs_2[CAN_STATUS_MSGS_TO_STORE];
 	static can_status_msg_3 stat_msgs_3[CAN_STATUS_MSGS_TO_STORE];
