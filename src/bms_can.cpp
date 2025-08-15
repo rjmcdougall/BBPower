@@ -342,8 +342,8 @@ void bms_can::can_process_task()
 {
 	vTaskDelay(pdMS_TO_TICKS(2000));
 	BLog_i(TAG, "CAN  starting process task\n");
-	BLog_i(TAG, "CAN  process task queue_canrx = %lx\n", &bms_can::queue_canrx);
-	BLog_i(TAG, "CAN  process task queue_canrx contents = %lx\n", bms_can::queue_canrx);
+	//BLog_i(TAG, "CAN  process task queue_canrx = %lx\n", &bms_can::queue_canrx);
+	//BLog_i(TAG, "CAN  process task queue_canrx contents = %lx\n", bms_can::queue_canrx);
 	twai_message_t rxmsg;
 	for (;;)
 	{

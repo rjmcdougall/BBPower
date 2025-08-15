@@ -6,7 +6,7 @@
 
 // Brain sleep after 3 hours
 // TODO: do this only when voltage is < 90%
-static const int kbrainSleepSeconds = 120;//3600 * 3;
+static const int kbrainSleepSeconds = 120; // 3600 * 3;
 
 // #define NEOPIXEL_POWER 21
 // #define PIN_NEOPIXEL 33
@@ -20,8 +20,11 @@ ina229 ina;
 
 // GFXcanvas16 canvas(240, 135);
 
+long boot_time;
+
 void setup()
 {
+    boot_time = millis();
     delay(1000);
     Serial.begin(115200);
     delay(1000);
@@ -88,9 +91,12 @@ boolean toggle_led()
 uint32_t last_active_time = 0;
 int iter = 0;
 uint32_t fud_pressed = 0;
+long up_time;
 
 void loop()
 {
+
+    up_time = millis() - boot_time;
 
     delay(10);
     iter++;
@@ -99,7 +105,7 @@ void loop()
     if (get_fud_button())
     {
         fud_pressed++;
-        BLog_i(TAG, "fud %d", fud_pressed);
+        // BLog_i(TAG, "fud %d", fud_pressed);
         // Also turn on brain for short press
         last_active_time = millis();
     }
@@ -111,7 +117,9 @@ void loop()
         }
     }
 
-    if (fud_pressed > 3)
+    // FUD won't work unless the controller has been up for 30 seconds.
+    // Continuing to hold it down will turn everything on.
+    if ((up_time > 30000) && (fud_pressed > 3))
     {
         BLog_i(TAG, "fud_pressed");
         fud_pressed = 0;
@@ -119,6 +127,19 @@ void loop()
         delay(2000);
         set_brain_reg(false);
         delay(2000);
+        esp_restart();
+    }
+    else if (fud_pressed > 3)
+    {
+        // backdoor to turn on
+        BLog_i(TAG, "fud backdoor enabled; power on and leave on");
+        set_auto(false);
+        set_amp(true);
+        set_led_master(true);
+        delay(10);
+        set_led_reg(true);
+        set_brain_reg(true);
+        delay(10);
     }
 
     if (get_auto())
@@ -139,7 +160,7 @@ void loop()
 
         if (iter % 1000 == 0)
         {
-            BLog_d(TAG, "vesc = %d, rpm = %f, ina229 vbus = %f, vshunt = %f mv, current = %f", vescActive, rpm, voltage, vshunt, current);
+            BLog_d(TAG, "vesc = %d, rpm = %d, ina229 vbus = %f, vshunt = %f mv, current = %f", vescActive, rpm, voltage, vshunt, current);
         }
 
         // delay(100);
