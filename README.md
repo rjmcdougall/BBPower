@@ -1,1 +1,1 @@
-# BurnerPower
+# BBPower PCB Firmware
